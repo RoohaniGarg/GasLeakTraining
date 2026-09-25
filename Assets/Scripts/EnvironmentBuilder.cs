@@ -4,6 +4,7 @@ using TMPro;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 /// <summary>
 /// Phase 3.6: Builds recognisable, low-poly props for the training scene out of
@@ -22,7 +23,8 @@ public static class EnvironmentBuilder
     // Materials
     static Material pipeYellow, steel, darkSteel, lpgRed, valveRed, white, concrete,
         holeBlack, vestOrange, reflective, navy, skin, helmetYellow, bootBlack,
-        safeGreen, signYellow, signRed, ropeOrange, floorLine;
+        safeGreen, signYellow, signRed, ropeOrange, floorLine,
+        gasParticle, zoneRed, zoneAmber, markerRed;
 
     [MenuItem("SIH/Build Realistic Environment")]
     public static void Build()
@@ -50,6 +52,18 @@ public static class EnvironmentBuilder
         BuildConfinedSpace(root);
         BuildTripod(root);
         BuildSafeZone(root);
+        BuildHazardZones(root);
+
+        // Hook the Phase 4 hazards into ScenarioManager
+        var sm = Object.FindObjectsByType<ScenarioManager>(FindObjectsInactive.Include, FindObjectsSortMode.None).FirstOrDefault();
+        if (sm != null)
+        {
+            var so = new SerializedObject(sm);
+            so.FindProperty("gasLeak").objectReferenceValue = root.GetComponentInChildren<GasLeakController>(true);
+            so.FindProperty("hazardZones").objectReferenceValue = root.GetComponentInChildren<HazardZoneVisual>(true);
+            so.ApplyModifiedPropertiesWithoutUndo();
+        }
+        else Debug.LogWarning("EnvironmentBuilder: ScenarioManager not found - assign gasLeak / hazardZones manually.");
 
         EditorSceneManager.MarkSceneDirty(root.gameObject.scene);
         EditorSceneManager.SaveScene(root.gameObject.scene);
@@ -100,6 +114,85 @@ public static class EnvironmentBuilder
         var leak = new GameObject("LeakPoint").transform;
         leak.SetParent(t, false);
         leak.localPosition = new Vector3(0, 0.286f, 0);
+
+        BuildGasFX(t, leak);
+    }
+
+    // Phase 4: particle gas cloud + 3D hiss at the flange, warning marker above the pipe
+    static void BuildGasFX(Transform pipe, Transform leak)
+    {
+        var go = new GameObject("GasLeakFX");
+        go.transform.SetParent(leak, false);
+        // Spray out of the joint toward the front and slightly up
+        go.transform.localRotation = Quaternion.LookRotation(new Vector3(0.35f, 0.3f, -1f).normalized, Vector3.up);
+
+        var ps = go.AddComponent<ParticleSystem>();
+        ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+
+        var main = ps.main;
+        main.duration = 5f;
+        main.loop = true;
+        main.playOnAwake = false;
+        main.startLifetime = new ParticleSystem.MinMaxCurve(2.2f, 3.4f);
+        main.startSpeed = new ParticleSystem.MinMaxCurve(0.04f, 0.09f);
+        main.startSize = new ParticleSystem.MinMaxCurve(0.03f, 0.06f);
+        main.startRotation = new ParticleSystem.MinMaxCurve(0f, 6.28f);
+        main.startColor = Color.white;
+        main.gravityModifier = 0.004f;              // LPG is heavier than air: drifts down and spreads
+        main.simulationSpace = ParticleSystemSimulationSpace.Local;
+        main.scalingMode = ParticleSystemScalingMode.Hierarchy;
+        main.maxParticles = 400;
+
+        var emission = ps.emission;
+        emission.rateOverTime = 0f;
+
+        var shape = ps.shape;
+        shape.shapeType = ParticleSystemShapeType.Cone;
+        shape.angle = 28f;
+        shape.radius = 0.012f;
+        shape.rotation = Vector3.zero;
+
+        var sol = ps.sizeOverLifetime;
+        sol.enabled = true;
+        sol.size = new ParticleSystem.MinMaxCurve(1f, AnimationCurve.Linear(0f, 0.6f, 1f, 3.5f));
+
+        var col = ps.colorOverLifetime;
+        col.enabled = true;
+        var grad = new Gradient();
+        grad.SetKeys(
+            new[] { new GradientColorKey(new Color(0.88f, 0.96f, 0.55f), 0f), new GradientColorKey(new Color(0.72f, 0.82f, 0.45f), 1f) },
+            new[] { new GradientAlphaKey(0f, 0f), new GradientAlphaKey(0.6f, 0.15f), new GradientAlphaKey(0.3f, 0.6f), new GradientAlphaKey(0f, 1f) });
+        col.color = grad;
+
+        var noise = ps.noise;
+        noise.enabled = true;
+        noise.strength = 0.03f;
+        noise.frequency = 1.5f;
+        noise.scrollSpeed = 0.5f;
+
+        var rend = go.GetComponent<ParticleSystemRenderer>();
+        rend.sharedMaterial = gasParticle;
+        rend.renderMode = ParticleSystemRenderMode.Billboard;
+
+        var audio = go.AddComponent<AudioSource>();
+        audio.playOnAwake = false;
+        audio.loop = true;
+        audio.spatialBlend = 1f;                    // fully 3D: louder when the phone is closer
+        audio.rolloffMode = AudioRolloffMode.Logarithmic;
+        audio.minDistance = 0.3f;
+        audio.maxDistance = 3f;
+        audio.dopplerLevel = 0f;
+
+        // Warning diamond (red border, white face, red "!")
+        var marker = new GameObject("HazardMarker").transform;
+        marker.SetParent(pipe, false);
+        marker.localPosition = new Vector3(0, 0.72f, 0);
+        Part(marker, "Diamond", PrimitiveType.Cube, Vector3.zero, new Vector3(0.075f, 0.075f, 0.006f), markerRed, new Vector3(0, 0, 45));
+        Part(marker, "DiamondFace", PrimitiveType.Cube, new Vector3(0, 0, -0.004f), new Vector3(0.056f, 0.056f, 0.002f), white, new Vector3(0, 0, 45));
+        Label(marker, "Text_Warning", "!", new Vector3(0, 0.002f, -0.007f), new Vector2(0.05f, 0.07f), new Color(0.85f, 0.08f, 0.08f), 0.6f);
+
+        var ctrl = go.AddComponent<GasLeakController>();
+        ctrl.hazardMarker = marker.gameObject;
     }
 
     // Red LPG cylinder with dome, neck, valve and label
@@ -232,6 +325,19 @@ public static class EnvironmentBuilder
         Label(t, "Text_Assembly", "ASSEMBLY\nPOINT", new Vector3(0, 0.16f, 0.054f), new Vector2(0.11f, 0.045f), Color.white, 0.17f);
     }
 
+    // Phase 4: red (danger) and amber (warning) zones around the leak and the manhole.
+    // Hidden at start; HazardZoneVisual.Show() fades them in.
+    static void BuildHazardZones(Transform root)
+    {
+        Transform t = Group(root, "HazardZones", Vector3.zero, 0f);
+        Part(t, "Amber_Pipe", PrimitiveType.Cylinder, new Vector3(-0.3f, 0.003f, 0.3f), new Vector3(0.38f, 0.001f, 0.38f), zoneAmber);
+        Part(t, "Red_Pipe", PrimitiveType.Cylinder, new Vector3(-0.3f, 0.004f, 0.3f), new Vector3(0.24f, 0.001f, 0.24f), zoneRed);
+        Part(t, "Amber_Manhole", PrimitiveType.Cylinder, new Vector3(0.2f, 0.003f, 0.15f), new Vector3(0.44f, 0.001f, 0.44f), zoneAmber);
+        Part(t, "Red_Manhole", PrimitiveType.Cylinder, new Vector3(0.2f, 0.004f, 0.15f), new Vector3(0.3f, 0.001f, 0.3f), zoneRed);
+        if (t.GetComponent<HazardZoneVisual>() == null)
+            t.gameObject.AddComponent<HazardZoneVisual>();
+    }
+
     // ---------------------------------------------------------------- helpers
 
     /// Makes (or cleans) a named object under root: unit scale, no mesh, no collider, no children.
@@ -317,6 +423,61 @@ public static class EnvironmentBuilder
         signRed      = Mat("Prop_SignRed",      new Color(0.80f, 0.05f, 0.05f), 0.0f, 0.3f);
         ropeOrange   = Mat("Prop_RopeOrange",   new Color(0.90f, 0.50f, 0.10f), 0.0f, 0.2f);
         floorLine    = Mat("Prop_FloorLine",    new Color(1.00f, 0.80f, 0.00f), 0.0f, 0.2f);
+        markerRed    = Mat("Prop_MarkerRed",    new Color(0.90f, 0.06f, 0.06f), 0.0f, 0.4f);
+        gasParticle  = TransparentMat("Prop_GasParticle", "Universal Render Pipeline/Particles/Unlit", new Color(1f, 1f, 1f, 1f), SoftParticleTexture());
+        zoneRed      = TransparentMat("Prop_ZoneRed",   "Universal Render Pipeline/Unlit", new Color(1.00f, 0.08f, 0.05f, 0.40f), null);
+        zoneAmber    = TransparentMat("Prop_ZoneAmber", "Universal Render Pipeline/Unlit", new Color(1.00f, 0.60f, 0.00f, 0.30f), null);
+    }
+
+    static Material TransparentMat(string name, string shaderName, Color c, Texture tex)
+    {
+        string path = MatFolder + "/" + name + ".mat";
+        Shader shader = Shader.Find(shaderName);
+        var m = AssetDatabase.LoadAssetAtPath<Material>(path);
+        if (m == null)
+        {
+            m = new Material(shader);
+            AssetDatabase.CreateAsset(m, path);
+        }
+        else m.shader = shader;
+
+        m.SetFloat("_Surface", 1f);   // Transparent
+        m.SetFloat("_Blend", 0f);     // Alpha
+        m.SetFloat("_SrcBlend", (float)BlendMode.SrcAlpha);
+        m.SetFloat("_DstBlend", (float)BlendMode.OneMinusSrcAlpha);
+        m.SetFloat("_SrcBlendAlpha", (float)BlendMode.One);
+        m.SetFloat("_DstBlendAlpha", (float)BlendMode.OneMinusSrcAlpha);
+        m.SetFloat("_ZWrite", 0f);
+        m.SetOverrideTag("RenderType", "Transparent");
+        m.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+        m.renderQueue = (int)RenderQueue.Transparent;
+        m.SetColor("_BaseColor", c);
+        if (tex != null) m.SetTexture("_BaseMap", tex);
+        EditorUtility.SetDirty(m);
+        return m;
+    }
+
+    // Soft round puff texture for the gas particles (generated, saved as an asset)
+    static Texture2D SoftParticleTexture()
+    {
+        string path = MatFolder + "/Prop_SoftParticle.asset";
+        var tex = AssetDatabase.LoadAssetAtPath<Texture2D>(path);
+        if (tex != null) return tex;
+
+        const int size = 64;
+        tex = new Texture2D(size, size, TextureFormat.RGBA32, false);
+        tex.wrapMode = TextureWrapMode.Clamp;
+        for (int y = 0; y < size; y++)
+            for (int x = 0; x < size; x++)
+            {
+                float dx = (x + 0.5f) / size * 2f - 1f;
+                float dy = (y + 0.5f) / size * 2f - 1f;
+                float a = Mathf.Clamp01(1f - Mathf.Sqrt(dx * dx + dy * dy));
+                tex.SetPixel(x, y, new Color(1f, 1f, 1f, a * a));
+            }
+        tex.Apply();
+        AssetDatabase.CreateAsset(tex, path);
+        return tex;
     }
 
     static Material Mat(string name, Color c, float metallic, float smoothness)

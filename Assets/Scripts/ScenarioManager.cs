@@ -3,22 +3,23 @@ using UnityEngine;
 
 /// <summary>
 /// All the stages of the gas leak training, in order.
+/// (Phase 7 will replace these with the v3 states.)
 /// </summary>
 public enum TrainingState
 {
     Placement,  // User is scanning and tapping to place
     Briefing,   // Environment has appeared, short pause before the leak
     GasLeak,    // Gas leak has started
-    Step1,      // Tap the gas source
-    Step2,      // MCQ: first response
-    Step3,      // Tap the emergency shutoff
-    Step4,      // MCQ: before re-entering
+    Step1,
+    Step2,
+    Step3,
+    Step4,
     Results     // Final score screen
 }
 
 /// <summary>
-/// Phase 3: Watches for placement, spawns the training environment
-/// at the tapped spot (facing the user), and runs the training state machine.
+/// Watches for placement, spawns the training environment at the tapped spot
+/// (facing the user), and runs the training state machine.
 /// Lives on its own always-active GameObject.
 /// </summary>
 public class ScenarioManager : MonoBehaviour
@@ -33,6 +34,10 @@ public class ScenarioManager : MonoBehaviour
     [Tooltip("The AR camera. Leave empty to use Main Camera automatically.")]
     [SerializeField] private Transform arCamera;
 
+    [Header("Phase 4 - hazards (auto-assigned by SIH > Build Realistic Environment)")]
+    [SerializeField] private GasLeakController gasLeak;
+    [SerializeField] private HazardZoneVisual hazardZones;
+
     [Header("Timing")]
     [Tooltip("Seconds after the environment appears before the gas leak starts")]
     [SerializeField] private float gasLeakDelay = 3f;
@@ -42,6 +47,9 @@ public class ScenarioManager : MonoBehaviour
 
     // Other scripts can read the current stage
     public TrainingState CurrentState { get; private set; } = TrainingState.Placement;
+
+    public GasLeakController GasLeak => gasLeak;
+    public HazardZoneVisual HazardZones => hazardZones;
 
     private bool environmentSpawned = false;
     private Vector3 environmentOriginalScale = Vector3.one;
@@ -133,6 +141,18 @@ public class ScenarioManager : MonoBehaviour
     {
         CurrentState = newState;
         Debug.Log("ScenarioManager: State changed to " + newState);
+
+        // Phase 4 test hooks (Phase 7 replaces these with the full v3 flow)
+        switch (newState)
+        {
+            case TrainingState.Briefing:
+                if (gasLeak != null) gasLeak.StartLeak(false);   // faint hiss + wisps
+                break;
+            case TrainingState.GasLeak:
+                if (gasLeak != null) gasLeak.StartLeak(true);    // big cloud + marker
+                if (hazardZones != null) hazardZones.Show();
+                break;
+        }
     }
 
     /// <summary>
