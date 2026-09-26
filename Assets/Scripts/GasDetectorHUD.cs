@@ -20,10 +20,10 @@ public class GasDetectorHUD : MonoBehaviour
     [Header("Leak (near the pipe joint)")]
     public float minorLeakPeakLEL = 22f;
     public float majorLeakPeakLEL = 65f;
-    public float pipeNear = 0.08f, pipeFar = 0.5f;
+    public float pipeNear = 0.2f, pipeFar = 0.9f;
 
     [Header("Manhole (confined space)")]
-    public float holeNear = 0.08f, holeFar = 0.5f;
+    public float holeNear = 0.15f, holeFar = 0.8f;
     [Tooltip("O2 drop right at the opening before ventilation")]
     public float unventilatedO2Drop = 2.6f;
     public float unventilatedLEL = 6f;
@@ -105,6 +105,9 @@ public class GasDetectorHUD : MonoBehaviour
         float fPipe = Falloff(dPipe, pipeNear, pipeFar);
         float fHole = Falloff(dHole, holeNear, holeFar);
         float peak = (leak == null || !leak.IsLeaking) ? 0f : (leak.IsMajor ? majorLeakPeakLEL : minorLeakPeakLEL);
+
+        // After ventilation the blower disperses the small leak, so the air test at the manhole reads clean
+        if (Ventilated && !Emergency) peak *= 0.3f;
 
         float lel = peak * fPipe;
         float o2 = 20.9f - peak * 0.02f * fPipe;

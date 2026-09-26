@@ -637,7 +637,7 @@ public class ScenarioManager : MonoBehaviour
 
         int pts = isolateAttempts == 1 ? 10 : isolateAttempts == 2 ? 5 : 0;
         score.SetStep("Stop the leak", pts, 10, isolateAttempts == 1 ? "First try" : "Try " + isolateAttempts);
-        int bonus = t <= 30f ? 10 : t <= 100f ? 5 : 0;   // full marks within 30 s, -5 after 30 s, -10 after 100 s
+        int bonus = t <= 30f ? 10 : t <= 60f ? 5 : 0;   // full marks within 30 s, -5 after 30 s, -10 after 60 s
         score.SetStep("Response time", bonus, 10, "Alarm to shut-off: " + Mathf.RoundToInt(t) + " s");
 
         ui.SetInfo("Time: " + Mathf.RoundToInt(t) + " s");
