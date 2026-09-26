@@ -64,13 +64,15 @@ public static class EnvironmentBuilder
             so.FindProperty("hazardZones").objectReferenceValue = root.GetComponentInChildren<HazardZoneVisual>(true);
             so.ApplyModifiedPropertiesWithoutUndo();
 
-            // Phase 5: tap input + temporary test driver live on the ScenarioManager object
+            // Phase 5: tap input lives on the ScenarioManager object
             GetOrAdd<TapInputManager>(sm.gameObject);
-            var driver = GetOrAdd<Phase5TestDriver>(sm.gameObject);
-            driver.scenario = sm;
-            driver.buddy = root.GetComponentInChildren<BuddyController>(true);
-            driver.lifeline = root.GetComponentInChildren<Lifeline>(true);
-            EditorUtility.SetDirty(driver);
+
+            // Phase 6/7: the real training flow replaces the temporary Phase 5 test driver
+            foreach (var c in sm.GetComponents<MonoBehaviour>())
+                if (c != null && c.GetType().Name == "Phase5TestDriver")
+                    Object.DestroyImmediate(c);
+            GameObjectUtility.RemoveMonoBehavioursWithMissingScript(sm.gameObject);
+            EditorUtility.SetDirty(sm.gameObject);
         }
         else Debug.LogWarning("EnvironmentBuilder: ScenarioManager not found - assign gasLeak / hazardZones manually.");
 
@@ -370,6 +372,7 @@ public static class EnvironmentBuilder
         line.enabled = false;
         var life = GetOrAdd<Lifeline>(tripod.gameObject);
         life.buddy = worker;
+        life.width = 0.008f;   // Phase 6: thicker so it reads on a phone
         EditorUtility.SetDirty(life);
     }
 

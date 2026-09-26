@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.XR.ARFoundation;
 using UnityEngine.XR.ARSubsystems;
 
@@ -8,6 +9,8 @@ using UnityEngine.XR.ARSubsystems;
 /// Phase 2: shows reticle on detected surfaces, locks position on tap.
 /// Phase 3.5 fix: places at the exact surface point being aimed at (not the
 /// smoothed reticle, which lags behind), and only on horizontal floors/tables.
+/// Phase 6: ignores taps on UI buttons, adds ResetPlacement() and the
+/// PlaceInFrontOfCamera() fallback for floors ARCore can't detect.
 /// </summary>
 public class ARPlacementManager : MonoBehaviour
 {
@@ -125,6 +128,10 @@ public class ARPlacementManager : MonoBehaviour
     {
         if (Input.touchCount > 0 && Input.GetTouch(0).phase == TouchPhase.Began)
         {
+            // Taps on on-screen buttons are not placement taps
+            if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject(Input.GetTouch(0).fingerId))
+                return;
+
             if (hasValidSurface)
                 ConfirmPlacement();
             else
@@ -146,5 +153,51 @@ public class ARPlacementManager : MonoBehaviour
         arPlaneManager.enabled = false;
 
         Debug.Log("ARPlacementManager: Placement confirmed at " + placedPosition);
+    }
+
+    /// <summary>True while the reticle is on a usable floor.</summary>
+    public bool HasSurface => hasValidSurface;
+
+    /// <summary>Phase 6: go back to scanning so the scene can be placed somewhere else.</summary>
+    public void ResetPlacement()
+    {
+        placementDone = false;
+        isPlacementComplete = false;
+        hasValidSurface = false;
+        reticleSnapped = false;
+        arPlaneManager.enabled = true;
+        foreach (var plane in arPlaneManager.trackables)
+            plane.gameObject.SetActive(true);
+        Debug.Log("ARPlacementManager: Placement reset - scanning again.");
+    }
+
+    /// <summary>
+    /// Phase 6 fallback: place the scene about 'distance' metres in front of the
+    /// camera on the floor, even if no plane was found. Floor height = the lowest
+    /// detected horizontal plane, or camera height minus 'assumedCameraHeight'.
+    /// </summary>
+    public void PlaceInFrontOfCamera(float distance = 1.0f, float assumedCameraHeight = 1.3f)
+    {
+        Transform cam = Camera.main != null ? Camera.main.transform : null;
+        if (cam == null) return;
+
+        Vector3 forward = cam.forward;
+        forward.y = 0f;
+        if (forward.sqrMagnitude < 0.001f) forward = Vector3.forward;
+        forward.Normalize();
+
+        float floorY = cam.position.y - assumedCameraHeight;
+        bool foundPlane = false;
+        foreach (var plane in arPlaneManager.trackables)
+        {
+            if (plane.alignment != PlaneAlignment.HorizontalUp) continue;
+            float y = plane.transform.position.y;
+            if (y > cam.position.y - 0.3f) continue;          // ignore tables above ~waist
+            if (!foundPlane || y < floorY) { floorY = y; foundPlane = true; }
+        }
+
+        lastHitPose = new Pose(cam.position + forward * distance, Quaternion.LookRotation(forward, Vector3.up));
+        lastHitPose.position.y = floorY;
+        ConfirmPlacement();
     }
 }
