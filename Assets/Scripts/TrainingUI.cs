@@ -534,8 +534,8 @@ public class TrainingUI : MonoBehaviour
         refresh();
     }
 
-    /// <summary>Final score card with RETRY.</summary>
-    public void ShowResults(int score, string rating, string responseTime, List<string> lines, Action onRetry)
+    /// <summary>Final score card with RETRY and EXIT.</summary>
+    public void ShowResults(int score, string rating, string responseTime, List<string> lines, Action onRetry, Action onExit)
     {
         var card = OpenModal();
         Label(card, "TRAINING COMPLETE", 32, Orange, TextAlignmentOptions.Center, true).characterSpacing = 6;
@@ -546,6 +546,7 @@ public class TrainingUI : MonoBehaviour
             Label(card, responseTime, 34, Muted, TextAlignmentOptions.Center, false);
         Label(card, string.Join("\n", lines), 32, Color.white, TextAlignmentOptions.Left, false).lineSpacing = 12;
         AddButton(card, "RETRY", Orange, 150, () => { CloseModal(); onRetry?.Invoke(); });
+        AddButton(card, "EXIT", new Color(1, 1, 1, 0.12f), 120, () => { CloseModal(); onExit?.Invoke(); }, 38);
     }
 
     // ------------------------------------------------------- danger edge/flash

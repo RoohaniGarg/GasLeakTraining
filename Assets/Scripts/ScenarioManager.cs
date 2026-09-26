@@ -697,7 +697,17 @@ public class ScenarioManager : MonoBehaviour
             lines.Add("<b>Danger zone</b>  <color=#FFB9B9>-" + score.DangerPenalty + "</color>\n<size=85%><color=#AAB2BD>Entered a red zone " + score.DangerHits + " time" + (score.DangerHits > 1 ? "s" : "") + "</color></size>");
 
         string time = score.ResponseTime >= 0f ? "Emergency response time: " + Mathf.RoundToInt(score.ResponseTime) + " s" : "";
-        ui.ShowResults(score.Total, score.Rating, time, lines, Retry);
+        ui.ShowResults(score.Total, score.Rating, time, lines, Retry, ExitApp);
+    }
+
+    void ExitApp()
+    {
+        Debug.Log("ScenarioManager: Exit pressed");
+#if UNITY_EDITOR
+        UnityEditor.EditorApplication.isPlaying = false;
+#else
+        Application.Quit();
+#endif
     }
 
     void Retry()
