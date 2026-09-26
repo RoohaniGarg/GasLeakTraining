@@ -53,6 +53,7 @@ public static class EnvironmentBuilder
         BuildTripod(root);
         BuildSafeZone(root);
         BuildHazardZones(root);
+        SetupInteraction(root);
 
         // Hook the Phase 4 hazards into ScenarioManager
         var sm = Object.FindObjectsByType<ScenarioManager>(FindObjectsInactive.Include, FindObjectsSortMode.None).FirstOrDefault();
@@ -62,6 +63,14 @@ public static class EnvironmentBuilder
             so.FindProperty("gasLeak").objectReferenceValue = root.GetComponentInChildren<GasLeakController>(true);
             so.FindProperty("hazardZones").objectReferenceValue = root.GetComponentInChildren<HazardZoneVisual>(true);
             so.ApplyModifiedPropertiesWithoutUndo();
+
+            // Phase 5: tap input + temporary test driver live on the ScenarioManager object
+            GetOrAdd<TapInputManager>(sm.gameObject);
+            var driver = GetOrAdd<Phase5TestDriver>(sm.gameObject);
+            driver.scenario = sm;
+            driver.buddy = root.GetComponentInChildren<BuddyController>(true);
+            driver.lifeline = root.GetComponentInChildren<Lifeline>(true);
+            EditorUtility.SetDirty(driver);
         }
         else Debug.LogWarning("EnvironmentBuilder: ScenarioManager not found - assign gasLeak / hazardZones manually.");
 
@@ -336,6 +345,48 @@ public static class EnvironmentBuilder
         Part(t, "Red_Manhole", PrimitiveType.Cylinder, new Vector3(0.2f, 0.004f, 0.15f), new Vector3(0.3f, 0.001f, 0.3f), zoneRed);
         if (t.GetComponent<HazardZoneVisual>() == null)
             t.gameObject.AddComponent<HazardZoneVisual>();
+    }
+
+    // Phase 5: make objects tappable, give Ramesh movement, add the lifeline
+    static void SetupInteraction(Transform root)
+    {
+        MakeInteractable(root, "GasPipe", InteractableId.GasSource, "Gas pipe (leaking joint)");
+        MakeInteractable(root, "GasCylinder", InteractableId.GasCylinder, "LPG cylinder");
+        MakeInteractable(root, "ConfinedSpace", InteractableId.ConfinedSpace, "Confined space (manhole)");
+        MakeInteractable(root, "RetrievalTripod", InteractableId.RetrievalTripod, "Rescue tripod & winch");
+        MakeInteractable(root, "EmergencyShutoff", InteractableId.EmergencyShutoff, "Emergency shut-off valve");
+        MakeInteractable(root, "WorkerPlaceholder", InteractableId.Worker, "Ramesh (your buddy)");
+
+        Transform worker = root.Find("WorkerPlaceholder");
+        GetOrAdd<BuddyController>(worker.gameObject);
+
+        Transform tripod = root.Find("RetrievalTripod");
+        var line = GetOrAdd<LineRenderer>(tripod.gameObject);
+        line.sharedMaterial = ropeOrange;
+        line.positionCount = 2;
+        line.useWorldSpace = true;
+        line.numCapVertices = 2;
+        line.shadowCastingMode = ShadowCastingMode.Off;
+        line.enabled = false;
+        var life = GetOrAdd<Lifeline>(tripod.gameObject);
+        life.buddy = worker;
+        EditorUtility.SetDirty(life);
+    }
+
+    static void MakeInteractable(Transform root, string objectName, InteractableId id, string displayName)
+    {
+        Transform t = root.Find(objectName);
+        if (t == null) { Debug.LogError("EnvironmentBuilder: missing " + objectName); return; }
+        var io = GetOrAdd<InteractableObject>(t.gameObject);
+        io.id = id;
+        io.displayName = displayName;
+        EditorUtility.SetDirty(io);
+    }
+
+    static T GetOrAdd<T>(GameObject go) where T : Component
+    {
+        var c = go.GetComponent<T>();
+        return c != null ? c : go.AddComponent<T>();
     }
 
     // ---------------------------------------------------------------- helpers
