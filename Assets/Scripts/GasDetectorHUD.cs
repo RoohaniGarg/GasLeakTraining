@@ -82,7 +82,7 @@ public class GasDetectorHUD : MonoBehaviour
         airRadius = radius;
         airDuration = duration;
         airDone = onDone;
-        ui.SetAirTestProgress(0f, "Move over the opening");
+        ui.SetAirTestProgress(0f, "Move over opening");
     }
 
     public void CancelAirTest()
@@ -160,7 +160,7 @@ public class GasDetectorHUD : MonoBehaviour
             cb?.Invoke();
             return;
         }
-        ui.SetAirTestProgress(airProgress, inPlace ? "Sampling... hold still" : "Move over the opening");
+        ui.SetAirTestProgress(airProgress, inPlace ? "Sampling..." : "Move over opening");
     }
 
     void UpdateBeeper()

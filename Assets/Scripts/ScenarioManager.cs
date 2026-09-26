@@ -161,7 +161,7 @@ public class ScenarioManager : MonoBehaviour
         UpdateDangerZones();
 
         if (CurrentState == TrainingState.Emergency || CurrentState == TrainingState.Isolate)
-            ui.SetInfo("Response time: " + Mathf.FloorToInt(Time.time - emergencyStartTime) + " s");
+            ui.SetInfo("Time: " + Mathf.FloorToInt(Time.time - emergencyStartTime) + " s");
     }
 
     void SetState(TrainingState s)
@@ -193,7 +193,7 @@ public class ScenarioManager : MonoBehaviour
         ui.ShowPlaceButton(false);
         ui.SetStep("SET UP");
         ui.SetInfo("");
-        ui.SetInstruction("Point your phone at the floor and move it slowly from side to side.");
+        ui.SetInstruction("Scan the floor slowly.");
     }
 
     void UpdatePlacement()
@@ -208,8 +208,8 @@ public class ScenarioManager : MonoBehaviour
 
         placementTimer += Time.deltaTime;
         ui.SetInstruction(placementManager.HasSurface
-            ? "Floor found! Tap the screen to place the work site on the ring."
-            : "Point your phone at the floor and move it slowly from side to side.");
+            ? "Floor found. Tap to place the site."
+            : "Scan the floor slowly.");
 
         if (!placeButtonShown && placementTimer >= placeFallbackDelay)
         {
@@ -274,10 +274,9 @@ public class ScenarioManager : MonoBehaviour
         if (gasLeak != null) gasLeak.StartLeak(false);   // small leak - find it with the detector
 
         ui.ShowBriefing("GAS LEAK &\nCONFINED SPACE",
-            "You and your buddy <b>Ramesh</b> must inspect an underground valve chamber next to a gas line. " +
-            "The chamber is a <b>confined space</b>.\n\n" +
-            "Ramesh will go in. <b>You are the attendant</b> - you stay outside and keep him safe.\n\n" +
-            "Follow the protocol step by step. Your score and response time are recorded.",
+            "Job: inspect the valve chamber next to the gas line.\n\n" +
+            "Ramesh goes in. You are the <b>attendant</b> - you stay outside.\n\n" +
+            "Score and response time are recorded.",
             EnterHazardHunt, MoveSite);
     }
 
@@ -295,9 +294,9 @@ public class ScenarioManager : MonoBehaviour
         hud.Emergency = false;
         hud.Show(true);
 
-        ui.SetStep("STEP 1 OF 5  -  FIND THE HAZARDS");
-        ui.SetInstruction("Walk around the site with your gas detector (bottom left). Watch O2 and LEL, then <b>tap the 3 hazards</b> you find.");
-        ui.SetInfo("Hazards found: 0 / 3");
+        ui.SetStep("STEP 1/5   HAZARDS");
+        ui.SetInstruction("Walk around. Watch the detector.\nTap the 3 hazards.");
+        ui.SetInfo("Found 0/3");
     }
 
     void HandleHunt(InteractableId id)
@@ -309,23 +308,23 @@ public class ScenarioManager : MonoBehaviour
         {
             if (found.Contains(key))
             {
-                ui.Toast("Already found", "Look for the other hazards.", TrainingUI.ToastKind.Info, 1.5f);
+                ui.Toast("Already found", "", TrainingUI.ToastKind.Info, 1.5f);
                 return;
             }
             found.Add(key);
             Progress();
-            ui.SetInfo("Hazards found: " + found.Count + " / 3");
+            ui.SetInfo("Found " + found.Count + "/3");
 
             switch (key)
             {
                 case InteractableId.GasSource:
-                    ui.Toast("HAZARD: Gas leak", "LEL rises near the pipe joint - flammable gas is escaping.", TrainingUI.ToastKind.Good);
+                    ui.Toast("Gas leak", "Pipe joint. LEL rising.", TrainingUI.ToastKind.Good);
                     break;
                 case InteractableId.ConfinedSpace:
-                    ui.Toast("HAZARD: Confined space", "Oxygen is low at the opening, and heavy gas can collect down there.", TrainingUI.ToastKind.Good);
+                    ui.Toast("Confined space", "Low O2 at the opening.", TrainingUI.ToastKind.Good);
                     break;
                 default:
-                    ui.Toast("HAZARD: LPG cylinder", "Pressurised flammable gas right next to the leak.", TrainingUI.ToastKind.Good);
+                    ui.Toast("LPG cylinder", "Flammable, close to the leak.", TrainingUI.ToastKind.Good);
                     break;
             }
 
@@ -334,9 +333,9 @@ public class ScenarioManager : MonoBehaviour
         }
 
         huntWrongTaps++;
-        string body = id == InteractableId.EmergencyShutoff ? "That is the emergency shut-off valve - a safety device."
-                    : id == InteractableId.Worker ? "That is Ramesh, your buddy."
-                    : "Check your detector readings.";
+        string body = id == InteractableId.EmergencyShutoff ? "Shut-off valve - safety equipment."
+                    : id == InteractableId.Worker ? "That's Ramesh."
+                    : "Check the detector.";
         ui.Toast("Not a hazard", body, TrainingUI.ToastKind.Bad);
     }
 
@@ -347,17 +346,16 @@ public class ScenarioManager : MonoBehaviour
 
         int pts = 15 - 4 * huntWrongTaps;
         score.SetStep("Hazard hunt", pts, 15, huntWrongTaps == 0
-            ? "Found all 3 hazards, no wrong taps"
-            : "Found all 3 hazards (" + huntWrongTaps + " wrong tap" + (huntWrongTaps > 1 ? "s" : "") + ")");
+            ? "No wrong taps"
+            : huntWrongTaps + " wrong tap" + (huntWrongTaps > 1 ? "s" : ""));
 
         if (hazardZones != null) hazardZones.Show();
         dangerMonitorOn = true;
 
-        ui.ShowMessage("HAZARD ZONES MARKED",
-            "<color=#E5484D><b>RED</b></color> = danger zone. Never stand in it.\n" +
-            "<color=#F5A524><b>AMBER</b></color> = warning zone. Take care.\n" +
-            "<color=#2EB872><b>GREEN</b></color> = assembly point, where everyone goes in an emergency.\n\n" +
-            "Next: choose the protective equipment Ramesh needs.",
+        ui.ShowMessage("HAZARD ZONES",
+            "<color=#E5484D><b>RED</b></color>  -  danger, keep out\n" +
+            "<color=#F5A524><b>AMBER</b></color>  -  caution\n" +
+            "<color=#2EB872><b>GREEN</b></color>  -  assembly point",
             "NEXT", TrainingUI.Orange, EnterPPE);
     }
 
@@ -366,34 +364,34 @@ public class ScenarioManager : MonoBehaviour
     void EnterPPE()
     {
         SetState(TrainingState.PPESelection);
-        ui.SetStep("STEP 2 OF 5  -  PROTECTIVE EQUIPMENT");
-        ui.SetInstruction("Choose the equipment Ramesh must wear.");
+        ui.SetStep("STEP 2/5   PPE");
+        ui.SetInstruction("Pick Ramesh's PPE.");
         ui.SetInfo("");
 
         var items = new[]
         {
             new TrainingUI.PPEItem { label = "Breathing apparatus", icon = "scba", correct = true,
-                why = "supplies its own air, so it works even when oxygen is low." },
+                why = "own air supply - works in low O2." },
             new TrainingUI.PPEItem { label = "Dust mask", icon = "dustmask", correct = false,
-                why = "stops dust only - no protection from gas or low oxygen." },
+                why = "dust only - no gas protection." },
             new TrainingUI.PPEItem { label = "Harness + lifeline", icon = "harness", correct = true,
-                why = "lets you pull him out without going in." },
+                why = "pull him out without entering." },
             new TrainingUI.PPEItem { label = "Filter gas mask", icon = "gasmask", correct = false,
-                why = "cleans the air but gives no oxygen." },
+                why = "gives no oxygen." },
             new TrainingUI.PPEItem { label = "Ordinary torch", icon = "torch", correct = false,
-                why = "can spark and ignite gas - use a flameproof lamp." },
+                why = "can spark - use a flameproof lamp." },
             new TrainingUI.PPEItem { label = "Gas detector", icon = "detector", correct = true,
-                why = "warns him the moment the air turns bad." },
+                why = "warns him when the air turns bad." },
         };
 
-        ui.ShowPPE("STEP 2 OF 5  -  PPE",
-            "Pick the 3 items Ramesh must wear to enter the chamber",
-            "Hard hat and safety boots are already on.",
+        ui.ShowPPE("STEP 2/5   PPE",
+            "Pick 3 items for chamber entry",
+            "Hard hat and boots already on.",
             items, 3, mistakes =>
             {
                 score.SetStep("PPE selection", 15 - 5 * mistakes, 15, mistakes == 0
-                    ? "Chose the right PPE first time"
-                    : mistakes + " PPE mistake" + (mistakes > 1 ? "s" : "") + " before getting it right");
+                    ? "First try"
+                    : mistakes + " mistake" + (mistakes > 1 ? "s" : ""));
                 EnterBuddySetup();
             });
     }
@@ -408,8 +406,8 @@ public class ScenarioManager : MonoBehaviour
         hintsActive = true;
         hud.Ventilated = true;   // a blower has cleared the chamber
 
-        ui.SetStep("STEP 3 OF 5  -  BUDDY SYSTEM");
-        ui.SetInstruction("The chamber has been ventilated with a blower. First, clip Ramesh's lifeline to the rescue winch: <b>tap the TRIPOD</b> over the manhole.");
+        ui.SetStep("STEP 3/5   BUDDY SYSTEM");
+        ui.SetInstruction("Chamber ventilated.\nTap the <b>tripod</b> to attach Ramesh's lifeline.");
         ui.SetInfo("");
     }
 
@@ -423,24 +421,24 @@ public class ScenarioManager : MonoBehaviour
                     Progress();
                     if (lifeline != null) lifeline.Attach();
                     if (buddy != null) buddy.WalkTo(buddy.manholeApproach);
-                    ui.Toast("Lifeline attached", "If anything goes wrong you can winch him out without going in.", TrainingUI.ToastKind.Good);
+                    ui.Toast("Lifeline attached", "", TrainingUI.ToastKind.Good);
                     StartAirTest();
                 }
                 else if (id == InteractableId.Worker)
                 {
                     airTestMistake = true;
-                    ui.Toast("STOP - not yet!", "Never let anyone enter before the lifeline is on and the air is tested.", TrainingUI.ToastKind.Bad, 3.5f);
+                    ui.Toast("STOP", "Lifeline and air test first.", TrainingUI.ToastKind.Bad, 3f);
                 }
-                else ui.Toast("Tap the tripod", "The metal frame with the winch, over the manhole.", TrainingUI.ToastKind.Info);
+                else ui.Toast("Tap the tripod", "", TrainingUI.ToastKind.Info);
                 break;
 
             case BuddyStep.AirTest:
                 if (id == InteractableId.Worker)
                 {
                     airTestMistake = true;
-                    ui.Toast("STOP - test the air first!", "Never let anyone enter before the air is tested.", TrainingUI.ToastKind.Bad, 3.5f);
+                    ui.Toast("STOP", "Test the air first.", TrainingUI.ToastKind.Bad, 3f);
                 }
-                else ui.Toast("Don't tap - hold your phone there", "Hold your phone right over the manhole opening until the bar is full.", TrainingUI.ToastKind.Info);
+                else ui.Toast("Hold, don't tap", "Keep the phone over the opening.", TrainingUI.ToastKind.Info);
                 break;
 
             case BuddyStep.SendIn:
@@ -450,10 +448,10 @@ public class ScenarioManager : MonoBehaviour
                     buddyStep = BuddyStep.Inside;
                     hintsActive = false;
                     if (buddy != null) buddy.EnterConfinedSpace();
-                    ui.SetInstruction("Ramesh is climbing down. You are the attendant: <b>stay at the entry</b> and keep watching your detector.");
+                    ui.SetInstruction("Ramesh is going down.\nStay at the entry. Watch the detector.");
                     StartCoroutine(EmergencyAfterEntry());
                 }
-                else ui.Toast("Tap Ramesh", "Let him climb into the chamber.", TrainingUI.ToastKind.Info);
+                else ui.Toast("Tap Ramesh", "", TrainingUI.ToastKind.Info);
                 break;
         }
     }
@@ -461,7 +459,7 @@ public class ScenarioManager : MonoBehaviour
     void StartAirTest()
     {
         buddyStep = BuddyStep.AirTest;
-        ui.SetInstruction("<b>Test the air before entry.</b> Hold your phone right over the manhole opening until the bar on the detector is full.");
+        ui.SetInstruction("Air test: hold the phone over the manhole until the bar fills.");
         if (manhole != null) hint.PointAt(manhole);
         hud.StartAirTest(airTestRadius, airTestDuration, OnAirTestDone);
     }
@@ -470,7 +468,7 @@ public class ScenarioManager : MonoBehaviour
     {
         Progress();
         buddyStep = BuddyStep.Question;
-        ui.Toast("AIR SAFE", "O2 20.9 %   LEL 0 %  -  entry allowed.", TrainingUI.ToastKind.Good, 2.5f);
+        ui.Toast("AIR SAFE", "O2 20.9%   LEL 0%", TrainingUI.ToastKind.Good, 2.5f);
         StartCoroutine(AttendantQuestionLater());
     }
 
@@ -479,34 +477,34 @@ public class ScenarioManager : MonoBehaviour
         yield return new WaitForSeconds(2.2f);
         hud.CancelAirTest();
 
-        ui.ShowMCQ("STEP 3 OF 5  -  BUDDY SYSTEM",
-            "Ramesh is going in. As the attendant, your job is to:",
+        ui.ShowMCQ("STEP 3/5   BUDDY SYSTEM",
+            "As attendant, your job is to:",
             new[]
             {
-                "Go in with him so he is not alone",
-                "Stay at the entry, keep constant contact, watch the gas readings and never enter",
-                "Fetch tools while he works - he will be quick",
-                "Check on him every 15 minutes",
+                "Go in with him",
+                "Stay at the entry, keep contact, watch readings",
+                "Fetch tools while he works",
+                "Check on him every 15 min",
             },
             1,
             new[]
             {
-                "If the air turns bad, two people inside means two victims.",
-                "The attendant never enters and never leaves the entry point.",
-                "The attendant never leaves the entry point.",
-                "Contact must be continuous - conditions change in seconds.",
+                "Two people inside = two victims.",
+                "Never enter, never leave the entry.",
+                "Never leave the entry.",
+                "Contact must be constant.",
             },
             attempts =>
             {
                 int mcq = attempts == 1 ? 10 : attempts == 2 ? 5 : 0;
                 int air = airTestMistake ? 5 : 10;
                 score.SetStep("Buddy system", air + mcq, 20,
-                    (airTestMistake ? "Tried to send Ramesh in before testing" : "Tested the air before entry") +
-                    (attempts == 1 ? ", attendant duty correct" : ", attendant duty on try " + attempts));
+                    (airTestMistake ? "Sent Ramesh before air test" : "Air tested first") +
+                    (attempts == 1 ? ", MCQ first try" : ", MCQ try " + attempts));
 
                 buddyStep = BuddyStep.SendIn;
                 lastProgressTime = Time.time;
-                ui.SetInstruction("Lifeline on, air tested, you are at the entry. <b>Tap RAMESH</b> to let him climb in.");
+                ui.SetInstruction("Tap <b>Ramesh</b> to send him in.");
             });
     }
 
@@ -537,9 +535,8 @@ public class ScenarioManager : MonoBehaviour
         ui.Flash(TrainingUI.Red);
         Vibrate();
 
-        ui.SetStep("STEP 4 OF 5  -  EMERGENCY");
-        ui.SetInstruction("<color=#E5484D><b>GAS ALARM!</b></color> The leak got worse and Ramesh has collapsed inside. " +
-                          "<b>Raise the alarm</b> and rescue him <b>without going in</b>.");
+        ui.SetStep("STEP 4/5   EMERGENCY");
+        ui.SetInstruction("<color=#E5484D><b>GAS ALARM</b></color>  -  Ramesh is down.\nRaise the alarm. Winch him out. Don't go in.");
         ui.ShowAlarmButton(true, OnAlarmPressed);
     }
 
@@ -549,7 +546,7 @@ public class ScenarioManager : MonoBehaviour
         alarmRaised = true;
         Progress();
         ui.ShowAlarmButton(false);
-        ui.Toast("Alarm raised", winchStarted ? "The rescue team is on the way." : "The rescue team is on the way. Now winch Ramesh out!", TrainingUI.ToastKind.Good);
+        ui.Toast("Alarm raised", winchStarted ? "Rescue team called." : "Now winch him out.", TrainingUI.ToastKind.Good);
         CheckRescueDone();
     }
 
@@ -562,7 +559,7 @@ public class ScenarioManager : MonoBehaviour
                 winchStarted = true;
                 Progress();
                 if (buddy != null) buddy.PullOut();
-                ui.Toast("Winching him out", "The lifeline lets you rescue him without entering.", TrainingUI.ToastKind.Good);
+                ui.Toast("Winching out", "", TrainingUI.ToastKind.Good);
                 StartCoroutine(RescueRoutine());
                 break;
 
@@ -570,15 +567,15 @@ public class ScenarioManager : MonoBehaviour
                 rescueMistakes++;
                 ui.Flash(TrainingUI.Red);
                 Vibrate();
-                ui.Toast("NEVER GO IN!", "Most confined-space deaths are would-be rescuers. Use the winch on the tripod.", TrainingUI.ToastKind.Bad, 4f);
+                ui.Toast("DON'T GO IN", "Most confined-space deaths are rescuers. Use the winch.", TrainingUI.ToastKind.Bad, 3.5f);
                 break;
 
             case InteractableId.EmergencyShutoff:
-                ui.Toast("Not yet", "First raise the alarm and get Ramesh out.", TrainingUI.ToastKind.Info);
+                ui.Toast("Not yet", "Alarm and rescue first.", TrainingUI.ToastKind.Info);
                 break;
 
             default:
-                ui.Toast("Focus!", "Raise the alarm and use the winch on the tripod.", TrainingUI.ToastKind.Info);
+                ui.Toast("Focus", "Raise the alarm. Use the winch.", TrainingUI.ToastKind.Info);
                 break;
         }
     }
@@ -591,7 +588,7 @@ public class ScenarioManager : MonoBehaviour
         if (buddy != null) buddy.GoToSafeZone();
         rescued = true;
         if (!alarmRaised)
-            ui.SetInstruction("Ramesh is out and going to the assembly point. <b>Raise the alarm now!</b>");
+            ui.SetInstruction("Ramesh is out. <b>Raise the alarm.</b>");
         CheckRescueDone();
     }
 
@@ -601,8 +598,8 @@ public class ScenarioManager : MonoBehaviour
         rescueScored = true;
         int pts = rescueMistakes == 0 ? 20 : rescueMistakes == 1 ? 10 : 0;
         score.SetStep("Emergency rescue", pts, 20, rescueMistakes == 0
-            ? "Non-entry rescue with the winch, alarm raised"
-            : "Tried to enter the chamber " + rescueMistakes + " time" + (rescueMistakes > 1 ? "s" : ""));
+            ? "Winch rescue, alarm raised"
+            : "Tried to enter " + rescueMistakes + " time" + (rescueMistakes > 1 ? "s" : ""));
         EnterIsolate();
     }
 
@@ -613,8 +610,8 @@ public class ScenarioManager : MonoBehaviour
         SetState(TrainingState.Isolate);
         isolateAttempts = 0;
         hintsActive = true;
-        ui.SetStep("STEP 5 OF 5  -  STOP THE LEAK");
-        ui.SetInstruction("Ramesh is out and help is coming. Now stop the gas: <b>tap the red EMERGENCY SHUT-OFF valve</b>.");
+        ui.SetStep("STEP 5/5   ISOLATE");
+        ui.SetInstruction("Shut off the gas.\nTap the red <b>shut-off valve</b>.");
     }
 
     void HandleIsolate(InteractableId id)
@@ -622,7 +619,7 @@ public class ScenarioManager : MonoBehaviour
         isolateAttempts++;
         if (id != InteractableId.EmergencyShutoff)
         {
-            ui.Toast("That's not the shut-off valve", "Look for the red handwheel with the EMERGENCY SHUT-OFF sign.", TrainingUI.ToastKind.Bad);
+            ui.Toast("Wrong", "Find the red handwheel.", TrainingUI.ToastKind.Bad);
             return;
         }
 
@@ -639,12 +636,12 @@ public class ScenarioManager : MonoBehaviour
         ui.SetDanger(false);
 
         int pts = isolateAttempts == 1 ? 10 : isolateAttempts == 2 ? 5 : 0;
-        score.SetStep("Stop the leak", pts, 10, isolateAttempts == 1 ? "Found the shut-off valve first time" : "Shut-off found on try " + isolateAttempts);
+        score.SetStep("Stop the leak", pts, 10, isolateAttempts == 1 ? "First try" : "Try " + isolateAttempts);
         int bonus = t <= 30f ? 10 : t <= 100f ? 5 : 0;   // full marks within 30 s, -5 after 30 s, -10 after 100 s
-        score.SetStep("Response time", bonus, 10, "Alarm to gas shut-off: " + Mathf.RoundToInt(t) + " s");
+        score.SetStep("Response time", bonus, 10, "Alarm to shut-off: " + Mathf.RoundToInt(t) + " s");
 
-        ui.SetInfo("Response time: " + Mathf.RoundToInt(t) + " s");
-        ui.Toast("Gas supply shut off", "The leak is stopping and the readings are falling.", TrainingUI.ToastKind.Good);
+        ui.SetInfo("Time: " + Mathf.RoundToInt(t) + " s");
+        ui.Toast("Gas shut off", "", TrainingUI.ToastKind.Good);
         StartCoroutine(ReEntryQuizLater());
     }
 
@@ -652,27 +649,27 @@ public class ScenarioManager : MonoBehaviour
     {
         yield return new WaitForSeconds(2.5f);
         SetState(TrainingState.ReEntryQuiz);
-        ui.ShowMCQ("LAST QUESTION",
-            "The gas is shut off. Before anyone enters the chamber again, you should:",
+        ui.ShowMCQ("RE-ENTRY",
+            "Gas is off. Before anyone goes back in:",
             new[]
             {
-                "Switch on the exhaust fan to clear the gas faster",
-                "Ventilate, re-test the air with a gas detector, and enter only with a new permit and an attendant",
-                "Go back in once you can't smell gas",
-                "Send Ramesh back in - he knows the space",
+                "Switch on the exhaust fan",
+                "Ventilate, re-test, new permit + attendant",
+                "Go in once you can't smell gas",
+                "Send Ramesh back in",
             },
             1,
             new[]
             {
-                "Electrical switches can spark and ignite the gas.",
-                "Conditions must be proven safe again before any entry.",
-                "Your nose gets used to the smell, and some gases have no smell at all.",
-                "No one enters until the air is tested and confirmed safe.",
+                "Switches can spark.",
+                "Must be proven safe again.",
+                "Smell fades. Some gases have none.",
+                "Nobody enters untested air.",
             },
             attempts =>
             {
                 int pts = attempts == 1 ? 10 : attempts == 2 ? 5 : 0;
-                score.SetStep("Re-entry rules", pts, 10, attempts == 1 ? "Knew the re-entry rules" : "Re-entry rules on try " + attempts);
+                score.SetStep("Re-entry rules", pts, 10, attempts == 1 ? "First try" : "Try " + attempts);
                 EnterResults();
             });
     }
@@ -694,9 +691,9 @@ public class ScenarioManager : MonoBehaviour
             lines.Add("<b>" + s.title + "</b>  <color=" + colour + ">" + s.points + "/" + s.max + "</color>\n<size=85%><color=#AAB2BD>" + s.note + "</color></size>");
         }
         if (score.DangerPenalty > 0)
-            lines.Add("<b>Danger zone</b>  <color=#FFB9B9>-" + score.DangerPenalty + "</color>\n<size=85%><color=#AAB2BD>Entered a red zone " + score.DangerHits + " time" + (score.DangerHits > 1 ? "s" : "") + "</color></size>");
+            lines.Add("<b>Danger zone</b>  <color=#FFB9B9>-" + score.DangerPenalty + "</color>\n<size=85%><color=#AAB2BD>In a red zone " + score.DangerHits + " time" + (score.DangerHits > 1 ? "s" : "") + "</color></size>");
 
-        string time = score.ResponseTime >= 0f ? "Emergency response time: " + Mathf.RoundToInt(score.ResponseTime) + " s" : "";
+        string time = score.ResponseTime >= 0f ? "Response time: " + Mathf.RoundToInt(score.ResponseTime) + " s" : "";
         ui.ShowResults(score.Total, score.Rating, time, lines, Retry, ExitApp);
     }
 
@@ -789,7 +786,7 @@ public class ScenarioManager : MonoBehaviour
             lastDangerWarning = Time.time;
             Vibrate();
             bool penalised = score.AddDangerPenalty(5, 10);
-            ui.Toast("DANGER ZONE - STEP BACK!", penalised ? "You are inside a red zone. (-5 points)" : "You are inside a red zone.", TrainingUI.ToastKind.Bad);
+            ui.Toast("DANGER ZONE", penalised ? "Step back.  -5" : "Step back.", TrainingUI.ToastKind.Bad);
         }
         inDanger = danger;
         ui.SetDanger(danger);

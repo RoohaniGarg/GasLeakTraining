@@ -351,11 +351,11 @@ public class TrainingUI : MonoBehaviour
     public void ShowBriefing(string title, string body, Action onStart, Action onReplace)
     {
         var card = OpenModal();
-        Label(card, "SAFETY TRAINING", 30, Orange, TextAlignmentOptions.Center, true).characterSpacing = 6;
+        AddLogo(card, 84);
         Label(card, title, 58, Color.white, TextAlignmentOptions.Center, true);
         Label(card, body, 38, Color.white, TextAlignmentOptions.Left, false);
         AddButton(card, "START", Orange, 160, () => { CloseModal(); onStart?.Invoke(); });
-        AddButton(card, "Move the work site", new Color(1, 1, 1, 0.12f), 110, () => { CloseModal(); onReplace?.Invoke(); }, 34);
+        AddButton(card, "Re-place", new Color(1, 1, 1, 0.12f), 110, () => { CloseModal(); onReplace?.Invoke(); }, 34);
     }
 
     /// <summary>
@@ -390,7 +390,7 @@ public class TrainingUI : MonoBehaviour
                 b.interactable = false;
                 explain.gameObject.SetActive(true);
                 explain.color = right ? new Color32(140, 235, 180, 255) : new Color32(255, 170, 170, 255);
-                explain.text = (right ? "Correct! " : "Not quite. ") + explanations[index];
+                explain.text = (right ? "Correct. " : "Wrong. ") + explanations[index];
                 if (right)
                 {
                     solved = true;
@@ -449,7 +449,7 @@ public class TrainingUI : MonoBehaviour
                 cardImages[k].color = selected[k] ? picked : normal;
                 ticks[k].SetActive(selected[k]);
             }
-            counter.text = n + " of " + needed + " selected";
+            counter.text = n + " / " + needed;
         };
 
         for (int i = 0; i < items.Length; i++)
@@ -517,7 +517,7 @@ public class TrainingUI : MonoBehaviour
             {
                 done = true;
                 feedback.color = new Color32(140, 235, 180, 255);
-                var ok = new List<string> { "<b>All correct!</b>" };
+                var ok = new List<string> { "<b>Correct.</b>" };
                 foreach (var it in items) if (it.correct) ok.Add("<b>" + it.label + "</b> - " + it.why);
                 feedback.text = string.Join("\n", ok);
                 confirm.GetComponentInChildren<TextMeshProUGUI>().text = "CONTINUE";
@@ -526,19 +526,34 @@ public class TrainingUI : MonoBehaviour
 
             mistakes += wrongPicks + missing;
             if (missing > 0)
-                lines.Add(missing == 1 ? "One item Ramesh needs is still missing." : missing + " items Ramesh needs are still missing.");
+                lines.Add(missing == 1 ? "1 item missing." : missing + " items missing.");
             feedback.color = new Color32(255, 185, 185, 255);
-            feedback.text = string.Join("\n", lines) + "\nChange your choice and CONFIRM again.";
+            feedback.text = string.Join("\n", lines);
         });
 
         refresh();
+    }
+
+    /// <summary>ARmour logo (Resources/armour_logo), centred, given height.</summary>
+    void AddLogo(Transform parent, float height)
+    {
+        var tex = Resources.Load<Texture2D>("armour_logo");
+        if (tex == null) return;
+        var holder = NewRect("Logo", parent);
+        holder.gameObject.AddComponent<LayoutElement>().preferredHeight = height;
+        var img = NewRect("Image", holder);
+        Place(img, 0.5f, 0.5f, 0.5f, 0.5f, Vector2.zero, new Vector2(height * tex.width / tex.height, height), new Vector2(0.5f, 0.5f));
+        var raw = img.gameObject.AddComponent<RawImage>();
+        raw.texture = tex;
+        raw.raycastTarget = false;
     }
 
     /// <summary>Final score card with RETRY and EXIT.</summary>
     public void ShowResults(int score, string rating, string responseTime, List<string> lines, Action onRetry, Action onExit)
     {
         var card = OpenModal();
-        Label(card, "TRAINING COMPLETE", 32, Orange, TextAlignmentOptions.Center, true).characterSpacing = 6;
+        AddLogo(card, 60);
+        Label(card, "RESULT", 30, Muted, TextAlignmentOptions.Center, true).characterSpacing = 6;
         Label(card, score + " / 100", 110, Color.white, TextAlignmentOptions.Center, true);
         Color rc = rating == "EXCELLENT" ? Green : rating == "GOOD" ? Amber : Red;
         Label(card, rating, 52, rc, TextAlignmentOptions.Center, true);
