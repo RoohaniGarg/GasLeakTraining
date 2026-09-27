@@ -40,7 +40,9 @@ public class InteractableObject : MonoBehaviour
     /// <summary>Raised whenever any interactable is tapped.</summary>
     public static event Action<InteractableObject> OnTapped;
 
+    // One entry per material slot, so multi-material models (Ramesh) keep their own colours
     private readonly List<Renderer> renderers = new List<Renderer>();
+    private readonly List<int> slots = new List<int>();
     private readonly List<Color> baseColors = new List<Color>();
     private MaterialPropertyBlock block;
     private Coroutine flashRoutine;
@@ -51,14 +53,19 @@ public class InteractableObject : MonoBehaviour
         block = new MaterialPropertyBlock();
         baseScale = transform.localScale;
 
-        foreach (var r in GetComponentsInChildren<MeshRenderer>(true))
+        foreach (var r in GetComponentsInChildren<Renderer>(true))
         {
+            if (!(r is MeshRenderer) && !(r is SkinnedMeshRenderer)) continue;   // no ropes / particles
             if (r.GetComponent<TMP_Text>() != null) continue;          // skip sign text
             if (IsUnder(r.transform, "HazardMarker")) continue;         // skip warning diamond
-            var mat = r.sharedMaterial;
-            if (mat == null || !mat.HasProperty("_BaseColor")) continue;
-            renderers.Add(r);
-            baseColors.Add(mat.GetColor("_BaseColor"));
+            var mats = r.sharedMaterials;
+            for (int i = 0; i < mats.Length; i++)
+            {
+                if (mats[i] == null || !mats[i].HasProperty("_BaseColor")) continue;
+                renderers.Add(r);
+                slots.Add(i);
+                baseColors.Add(mats[i].GetColor("_BaseColor"));
+            }
         }
     }
 
@@ -79,13 +86,21 @@ public class InteractableObject : MonoBehaviour
 
     IEnumerator FlashRoutine()
     {
+        // Glow: quick rise, soft fade. Shape: springy squash-and-stretch from the base
+        // (pivots sit on the floor), dying out smoothly.
+        float duration = Mathf.Max(highlightTime, 0.75f);
+        const float rise = 0.07f;
         float t = 0f;
-        while (t < highlightTime)
+        while (t < duration)
         {
             t += Time.deltaTime;
-            float k = Mathf.Sin(Mathf.Clamp01(t / highlightTime) * Mathf.PI); // 0 -> 1 -> 0
-            ApplyTint(k * 0.7f);
-            transform.localScale = baseScale * (1f + popAmount * k);
+            float glow = t < rise ? Easing.OutCubic(t / rise) : 1f - Easing.InOutSine((t - rise) / (duration - rise));
+            ApplyTint(glow * 0.7f);
+
+            float wobble = Mathf.Exp(-t * 7f) * Mathf.Sin(t * 26f);
+            float up = 1f + popAmount * 1.6f * wobble;
+            float side = 1f - popAmount * 0.6f * wobble;
+            transform.localScale = Vector3.Scale(baseScale, new Vector3(side, up, side));
             yield return null;
         }
         ClearTint();
@@ -98,16 +113,20 @@ public class InteractableObject : MonoBehaviour
         for (int i = 0; i < renderers.Count; i++)
         {
             if (renderers[i] == null) continue;
-            renderers[i].GetPropertyBlock(block);
+            renderers[i].GetPropertyBlock(block, slots[i]);
             block.SetColor("_BaseColor", Color.Lerp(baseColors[i], highlightColor, amount));
-            renderers[i].SetPropertyBlock(block);
+            renderers[i].SetPropertyBlock(block, slots[i]);
         }
     }
 
     void ClearTint()
     {
-        foreach (var r in renderers)
-            if (r != null) r.SetPropertyBlock(null);
+        for (int i = 0; i < renderers.Count; i++)
+        {
+            if (renderers[i] == null) continue;
+            block.Clear();
+            renderers[i].SetPropertyBlock(block, slots[i]);
+        }
     }
 
     static bool IsUnder(Transform t, string name)

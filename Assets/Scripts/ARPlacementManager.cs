@@ -39,6 +39,8 @@ public class ARPlacementManager : MonoBehaviour
     // Pulsing animation
     private Vector3 reticleBaseScale;
     private float pulseTimer = 0f;
+    private float reticleAppear = 0f;   // 0..1 scale-in
+    private float lostTimer = 99f;      // seconds since the surface was last seen
 
     // Public - other scripts read this after placement
     [HideInInspector] public Vector3 placedPosition;
@@ -69,7 +71,12 @@ public class ARPlacementManager : MonoBehaviour
         {
             lastHitPose = hitPose;
             hasValidSurface = true;
-            reticle.SetActive(true);
+            lostTimer = 0f;
+            if (!reticle.activeSelf)
+            {
+                reticle.SetActive(true);
+                reticleAppear = 0f;
+            }
 
             if (!reticleSnapped)
             {
@@ -79,18 +86,23 @@ public class ARPlacementManager : MonoBehaviour
             }
             else
             {
-                reticle.transform.position = Vector3.Lerp(
-                    reticle.transform.position, hitPose.position, Time.deltaTime * reticleMoveSpeed);
-                reticle.transform.rotation = Quaternion.Lerp(
-                    reticle.transform.rotation, hitPose.rotation, Time.deltaTime * reticleMoveSpeed);
+                float k = Easing.Damp(reticleMoveSpeed, Time.deltaTime);
+                reticle.transform.position = Vector3.Lerp(reticle.transform.position, hitPose.position, k);
+                reticle.transform.rotation = Quaternion.Slerp(reticle.transform.rotation, hitPose.rotation, k);
             }
         }
         else
         {
-            reticle.SetActive(false);
             hasValidSurface = false;
-            reticleSnapped = false;
+            // Keep the reticle on screen briefly so a single lost frame doesn't make it flicker
+            lostTimer += Time.deltaTime;
+            if (lostTimer > 0.3f) reticleSnapped = false;
         }
+
+        // Fade the reticle in/out by scale
+        float targetAppear = lostTimer > 0.3f ? 0f : 1f;
+        reticleAppear = Mathf.MoveTowards(reticleAppear, targetAppear, Time.deltaTime / (targetAppear > 0f ? 0.3f : 0.2f));
+        if (reticleAppear <= 0f && targetAppear <= 0f && reticle.activeSelf) reticle.SetActive(false);
     }
 
     /// <summary>
@@ -116,12 +128,30 @@ public class ARPlacementManager : MonoBehaviour
     {
         if (!reticle.activeSelf) return;
         pulseTimer += Time.deltaTime * 2f;
-        float pulse = 1f + Mathf.Sin(pulseTimer) * 0.1f;
+        float pulse = (1f + Mathf.Sin(pulseTimer) * 0.08f) * Easing.OutBack(reticleAppear, 2f);
         reticle.transform.localScale = new Vector3(
             reticleBaseScale.x * pulse,
             reticleBaseScale.y,
             reticleBaseScale.z * pulse
         );
+    }
+
+    /// <summary>After placing: the ring squeezes in and disappears where the site lands.</summary>
+    System.Collections.IEnumerator ReticleOut()
+    {
+        if (!reticle.activeSelf) yield break;
+        reticle.transform.position = placedPosition;
+        Vector3 s0 = reticle.transform.localScale;
+        float t = 0f;
+        while (t < 0.25f)
+        {
+            t += Time.deltaTime;
+            float k = Easing.InCubic(t / 0.25f);
+            reticle.transform.localScale = new Vector3(s0.x * (1f - k), s0.y, s0.z * (1f - k));
+            yield return null;
+        }
+        reticle.SetActive(false);
+        reticle.transform.localScale = reticleBaseScale;
     }
 
     void CheckForTap()
@@ -144,7 +174,7 @@ public class ARPlacementManager : MonoBehaviour
         // Use the exact aimed point, not the smoothed reticle (which can lag behind)
         placedPosition = lastHitPose.position;
         placedRotation = lastHitPose.rotation;
-        reticle.SetActive(false);
+        StartCoroutine(ReticleOut());
         placementDone = true;
         isPlacementComplete = true;
 
@@ -165,6 +195,11 @@ public class ARPlacementManager : MonoBehaviour
         isPlacementComplete = false;
         hasValidSurface = false;
         reticleSnapped = false;
+        lostTimer = 99f;
+        reticleAppear = 0f;
+        StopAllCoroutines();
+        reticle.transform.localScale = reticleBaseScale;
+        reticle.SetActive(false);
         arPlaneManager.enabled = true;
         foreach (var plane in arPlaneManager.trackables)
             plane.gameObject.SetActive(true);

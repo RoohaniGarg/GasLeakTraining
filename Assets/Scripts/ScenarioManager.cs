@@ -64,6 +64,13 @@ public class ScenarioManager : MonoBehaviour
     private ScoreManager score;
     private HintArrow hint;
     private TapInputManager tapInput;
+    private EffectsManager fx;
+
+    // Phase 9 animation helpers
+    private Transform handwheel, winchDrum;
+    private readonly Dictionary<Transform, Vector3> childScales = new Dictionary<Transform, Vector3>();
+    private static readonly Color RingGood = new Color(0.25f, 0.9f, 0.55f, 0.85f);
+    private static readonly Color RingBad = new Color(1f, 0.3f, 0.25f, 0.85f);
 
     // Scene objects
     private BuddyController buddy;
@@ -138,6 +145,17 @@ public class ScenarioManager : MonoBehaviour
         Transform riser = root.Find("GasPipe/RiserLower");
         if (riser != null && riser.GetComponent<Renderer>() != null) template = riser.GetComponent<Renderer>().sharedMaterial;
         hint = HintArrow.Create(template, root);
+
+        // After-effects (rings + sounds). Ring material = clone of the hazard-zone material (transparent, in the build).
+        fx = gameObject.AddComponent<EffectsManager>();
+        Material ringTemplate = null;
+        if (hazardZones != null)
+        {
+            var zr = hazardZones.GetComponentInChildren<Renderer>(true);
+            if (zr != null) ringTemplate = zr.sharedMaterial;
+        }
+        fx.Init(ringTemplate, root);
+        SetUpMovingParts(root);
 
         environmentOriginalScale = root.localScale;
         trainingEnvironmentRoot.SetActive(false);
@@ -242,19 +260,116 @@ public class ScenarioManager : MonoBehaviour
         StartCoroutine(GrowIn());
     }
 
+    /// <summary>
+    /// Phase 9: the site lands with a ring on the floor, the base grows out, then
+    /// each prop pops up one after another (instead of everything scaling at once).
+    /// </summary>
     IEnumerator GrowIn()
     {
         Transform root = trainingEnvironmentRoot.transform;
+
+        // Remember every prop's real size once, then start them all at zero
+        var parts = new List<Transform>();
+        foreach (Transform c in root)
+        {
+            if (hazardZones != null && c == hazardZones.transform) continue;
+            if (!childScales.ContainsKey(c)) childScales[c] = c.localScale;
+            parts.Add(c);
+        }
+        // Floor first, then props from the centre outwards
+        parts.Sort((x, y) =>
+        {
+            bool fx0 = x.name.StartsWith("Floor"), fy0 = y.name.StartsWith("Floor");
+            if (fx0 != fy0) return fx0 ? -1 : 1;
+            return x.localPosition.sqrMagnitude.CompareTo(y.localPosition.sqrMagnitude);
+        });
+        foreach (var p in parts) p.localScale = Vector3.zero;
+
+        fx.Pop();
+        fx.Ring(root.position, new Color(0.35f, 0.85f, 1f, 0.9f), 0.8f, 1.1f, 2, 0.2f);
+
+        const float partDelay = 0.07f, partTime = 0.45f;
+        float total = Mathf.Max(spawnAnimationDuration, 0.25f + parts.Count * partDelay + partTime);
         float t = 0f;
-        while (t < spawnAnimationDuration)
+        while (t < total)
         {
             t += Time.deltaTime;
-            float k = Mathf.Clamp01(t / spawnAnimationDuration);
-            root.localScale = environmentOriginalScale * (1f - Mathf.Pow(1f - k, 3f));
+            root.localScale = environmentOriginalScale * Easing.OutCubic(t / spawnAnimationDuration);
+            for (int i = 0; i < parts.Count; i++)
+            {
+                float start = parts[i].name.StartsWith("Floor") ? 0f : 0.25f + i * partDelay;
+                float k = (t - start) / partTime;
+                float s = k <= 0f ? 0f : Easing.OutBack(k, 2f);
+                Vector3 b = childScales[parts[i]];
+                // pops up a little taller than wide, like it springs out of the floor
+                float stretch = k > 0f && k < 1f ? 1f + 0.12f * Mathf.Sin(Mathf.Clamp01(k) * Mathf.PI) : 1f;
+                parts[i].localScale = new Vector3(b.x * s, b.y * s * stretch, b.z * s);
+            }
             yield return null;
         }
         root.localScale = environmentOriginalScale;
+        foreach (var p in parts) p.localScale = childScales[p];
         EnterBriefing();
+    }
+
+    /// <summary>
+    /// Groups the shut-off handwheel parts under one pivot so the wheel can turn,
+    /// and finds the winch drum. Done at runtime - the built props are unchanged.
+    /// </summary>
+    void SetUpMovingParts(Transform root)
+    {
+        Transform shutoff = root.Find("EmergencyShutoff");
+        if (shutoff != null && shutoff.Find("HandwheelPivot") == null)
+        {
+            Transform hub = shutoff.Find("Hub");
+            if (hub != null)
+            {
+                var pivot = new GameObject("HandwheelPivot").transform;
+                pivot.SetParent(shutoff, false);
+                pivot.localPosition = new Vector3(0f, hub.localPosition.y, 0f);
+                var wheelParts = new List<Transform>();
+                foreach (Transform c in shutoff)
+                    if (c.name.StartsWith("Rim") || c.name.StartsWith("Spoke") || c.name == "Hub") wheelParts.Add(c);
+                foreach (var c in wheelParts) c.SetParent(pivot, true);
+                handwheel = pivot;
+            }
+        }
+        Transform tripod = root.Find("RetrievalTripod");
+        if (tripod != null) winchDrum = tripod.Find("WinchDrum");
+    }
+
+    IEnumerator SpinHandwheel()
+    {
+        if (handwheel == null) yield break;
+        Quaternion start = handwheel.localRotation;
+        const float turns = 2f, duration = 1.4f;
+        float t = 0f;
+        while (t < duration)
+        {
+            t += Time.deltaTime;
+            handwheel.localRotation = start * Quaternion.Euler(0f, -360f * turns * Easing.InOutCubic(t / duration), 0f);
+            yield return null;
+        }
+        handwheel.localRotation = start;
+    }
+
+    IEnumerator SpinWinchDrum()
+    {
+        if (winchDrum == null) yield break;
+        float speed = 0f;
+        while (buddy != null && (buddy.State == BuddyState.BeingPulledOut || speed > 1f))
+        {
+            float target = buddy.State == BuddyState.BeingPulledOut ? 540f : 0f;
+            speed = Mathf.MoveTowards(speed, target, 900f * Time.deltaTime);
+            winchDrum.Rotate(0f, speed * Time.deltaTime, 0f, Space.Self);
+            yield return null;
+        }
+    }
+
+    void RingAt(InteractableId id, Color c, float radius = 0.16f, int count = 1)
+    {
+        var o = Obj(id);
+        if (o != null && fx != null) fx.Ring(o.position, c, radius, 0.9f, count, 0.18f);
     }
 
     void MoveSite()
@@ -313,7 +428,8 @@ public class ScenarioManager : MonoBehaviour
             }
             found.Add(key);
             Progress();
-            ui.SetInfo("Found " + found.Count + "/3");
+            ui.SetInfo("Found " + found.Count + "/3", true);
+            RingAt(id, RingGood, 0.18f, 2);
 
             switch (key)
             {
@@ -333,6 +449,7 @@ public class ScenarioManager : MonoBehaviour
         }
 
         huntWrongTaps++;
+        RingAt(id, RingBad, 0.14f);
         string body = id == InteractableId.EmergencyShutoff ? "Shut-off valve - safety equipment."
                     : id == InteractableId.Worker ? "That's Ramesh."
                     : "Check the detector.";
@@ -405,6 +522,7 @@ public class ScenarioManager : MonoBehaviour
         airTestMistake = false;
         hintsActive = true;
         hud.Ventilated = true;   // a blower has cleared the chamber
+        if (buddy != null) buddy.ShowPPE(true);   // Ramesh now wears the PPE the trainee picked
 
         ui.SetStep("STEP 3/5   BUDDY SYSTEM");
         ui.SetInstruction("Chamber ventilated.\nTap the <b>tripod</b> to attach Ramesh's lifeline.");
@@ -421,6 +539,7 @@ public class ScenarioManager : MonoBehaviour
                     Progress();
                     if (lifeline != null) lifeline.Attach();
                     if (buddy != null) buddy.WalkTo(buddy.manholeApproach);
+                    RingAt(InteractableId.RetrievalTripod, new Color(1f, 0.55f, 0.1f, 0.85f), 0.18f, 2);
                     ui.Toast("Lifeline attached", "", TrainingUI.ToastKind.Good);
                     StartAirTest();
                 }
@@ -468,6 +587,7 @@ public class ScenarioManager : MonoBehaviour
     {
         Progress();
         buddyStep = BuddyStep.Question;
+        RingAt(InteractableId.ConfinedSpace, RingGood, 0.22f, 3);
         ui.Toast("AIR SAFE", "O2 20.9%   LEL 0%", TrainingUI.ToastKind.Good, 2.5f);
         StartCoroutine(AttendantQuestionLater());
     }
@@ -532,7 +652,10 @@ public class ScenarioManager : MonoBehaviour
         if (hazardZones != null) hazardZones.Show();
         hud.Emergency = true;
         if (buddy != null) buddy.Collapse();
-        ui.Flash(TrainingUI.Red);
+        ui.Flash(TrainingUI.Red, 3);
+        RingAt(InteractableId.ConfinedSpace, RingBad, 0.3f, 3);
+        if (gasLeak != null && fx != null) fx.Ring(gasLeak.transform.position, RingBad, 0.3f, 1.1f, 3, 0.25f);
+        if (fx != null) fx.Buzz();
         Vibrate();
 
         ui.SetStep("STEP 4/5   EMERGENCY");
@@ -546,6 +669,8 @@ public class ScenarioManager : MonoBehaviour
         alarmRaised = true;
         Progress();
         ui.ShowAlarmButton(false);
+        ui.Flash(TrainingUI.Amber);
+        if (fx != null) fx.Siren(4.5f);
         ui.Toast("Alarm raised", winchStarted ? "Rescue team called." : "Now winch him out.", TrainingUI.ToastKind.Good);
         CheckRescueDone();
     }
@@ -559,13 +684,16 @@ public class ScenarioManager : MonoBehaviour
                 winchStarted = true;
                 Progress();
                 if (buddy != null) buddy.PullOut();
+                StartCoroutine(SpinWinchDrum());
+                RingAt(InteractableId.RetrievalTripod, RingGood, 0.2f, 2);
                 ui.Toast("Winching out", "", TrainingUI.ToastKind.Good);
                 StartCoroutine(RescueRoutine());
                 break;
 
             case InteractableId.ConfinedSpace:
                 rescueMistakes++;
-                ui.Flash(TrainingUI.Red);
+                ui.Flash(TrainingUI.Red, 2);
+                RingAt(InteractableId.ConfinedSpace, RingBad, 0.22f, 2);
                 Vibrate();
                 ui.Toast("DON'T GO IN", "Most confined-space deaths are rescuers. Use the winch.", TrainingUI.ToastKind.Bad, 3.5f);
                 break;
@@ -619,12 +747,16 @@ public class ScenarioManager : MonoBehaviour
         isolateAttempts++;
         if (id != InteractableId.EmergencyShutoff)
         {
+            RingAt(id, RingBad, 0.14f);
             ui.Toast("Wrong", "Find the red handwheel.", TrainingUI.ToastKind.Bad);
             return;
         }
 
         Progress();
         hintsActive = false;
+        StartCoroutine(SpinHandwheel());
+        RingAt(InteractableId.EmergencyShutoff, RingGood, 0.2f, 3);
+        if (gasLeak != null && fx != null) fx.Ring(gasLeak.transform.position, RingGood, 0.25f, 1.2f, 2, 0.3f);
         float t = Time.time - emergencyStartTime;
         score.ResponseTime = t;
 

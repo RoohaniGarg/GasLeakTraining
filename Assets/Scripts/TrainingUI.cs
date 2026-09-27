@@ -16,6 +16,10 @@ using UnityEngine.UI;
 ///   Toast        - short right/wrong message that disappears by itself
 ///   Modal card   - briefing, questions, PPE picker, messages, results
 ///   Danger edge  - pulsing red screen edge when the phone is in a danger zone
+///
+/// Phase 9 (polish): every panel fades + slides in/out, buttons are springy,
+/// modal cards pop in with their content appearing one line after another,
+/// wrong answers shake, the score counts up, and the alarm flashes the screen.
 /// </summary>
 public class TrainingUI : MonoBehaviour
 {
@@ -51,25 +55,44 @@ public class TrainingUI : MonoBehaviour
     }
 
     public DetectorView Detector { get; private set; }
-    public bool ModalOpen => modalRoot != null && modalRoot.activeSelf;
+    public bool ModalOpen => modalRoot != null && IsShown(modalRoot);
 
     // Built objects
     private RectTransform canvasRect;
     private Sprite rounded, circle;
     private GameObject topBar;
+    private Image topBarBg;
     private TextMeshProUGUI stepText, instructionText, infoText;
     private GameObject placeButton, alarmButton;
     private Action placeAction, alarmAction;
     private GameObject toastRoot;
     private Image toastBg;
+    private RectTransform toastTimer;
     private TextMeshProUGUI toastTitle, toastBody;
     private Coroutine toastRoutine;
     private GameObject modalRoot;
     private RectTransform modalCard;
+    private CanvasGroup modalCardGroup;
+    private int modalToken;
     private RawImage dangerEdge;
+    private Image screenTint;
     private bool dangerOn;
+    private float dangerK;
     private float flashAlpha;
     private Color flashColor = Color.red;
+
+    // Detector animation state
+    private Color pillTarget = Green;
+    private string lastStatus = "SAFE";
+    private float airTarget, airShown;
+    private string lastAirLabel = "";
+
+    // Panel animation bookkeeping
+    private readonly Dictionary<GameObject, Coroutine> panelAnims = new Dictionary<GameObject, Coroutine>();
+    private readonly HashSet<GameObject> hiding = new HashSet<GameObject>();
+    private readonly Dictionary<RectTransform, Vector2> homePos = new Dictionary<RectTransform, Vector2>();
+    private readonly Dictionary<Graphic, Coroutine> colorAnims = new Dictionary<Graphic, Coroutine>();
+    private Coroutine instructionFade;
 
     // ================================================================= set-up
 
@@ -120,8 +143,8 @@ public class TrainingUI : MonoBehaviour
         rt.anchorMin = new Vector2(0, 1); rt.anchorMax = new Vector2(1, 1); rt.pivot = new Vector2(0.5f, 1);
         rt.offsetMin = new Vector2(28, 0); rt.offsetMax = new Vector2(-28, 0);
         rt.anchoredPosition = new Vector2(0, -70);
-        var bg = AddImage(rt.gameObject, Dark);
-        bg.raycastTarget = false;
+        topBarBg = AddImage(rt.gameObject, Dark);
+        topBarBg.raycastTarget = false;
         var v = rt.gameObject.AddComponent<VerticalLayoutGroup>();
         v.padding = new RectOffset(40, 40, 28, 30);
         v.spacing = 10;
@@ -140,24 +163,43 @@ public class TrainingUI : MonoBehaviour
 
     public void SetStep(string label)
     {
+        bool changed = stepText.text != label;
         stepText.text = label;
         stepText.gameObject.SetActive(!string.IsNullOrEmpty(label));
-        topBar.SetActive(true);
+        bool wasShown = IsShown(topBar);
+        ShowPanel(topBar, true, new Vector2(0, 90), 0.35f);
+        if (changed && wasShown)
+        {
+            // New step: warm flash of the bar + a bounce of the step label
+            topBarBg.color = Color.Lerp(Dark, Orange, 0.55f);
+            ColorTo(topBarBg, Dark, 0.6f);
+            Spring(stepText.gameObject).Punch(0.12f);
+        }
     }
 
     public void SetInstruction(string text)
     {
-        if (instructionText.text != text) instructionText.text = text;
-        topBar.SetActive(true);
+        if (instructionText.text != text)
+        {
+            instructionText.text = text;
+            if (instructionFade != null) StopCoroutine(instructionFade);
+            instructionFade = StartCoroutine(FadeTextIn(instructionText, 0.3f));
+        }
+        ShowPanel(topBar, true, new Vector2(0, 90), 0.35f);
     }
 
-    public void SetInfo(string text)
+    /// <summary>Small info line. 'emphasize' bounces it (e.g. "Found 2/3").</summary>
+    public void SetInfo(string text, bool emphasize = false)
     {
-        if (infoText.text != text) infoText.text = text;
+        if (infoText.text != text)
+        {
+            infoText.text = text;
+            if (emphasize) Spring(infoText.gameObject).Punch(0.18f);
+        }
         infoText.gameObject.SetActive(!string.IsNullOrEmpty(text));
     }
 
-    public void ShowTopBar(bool show) => topBar.SetActive(show);
+    public void ShowTopBar(bool show) => ShowPanel(topBar, show, new Vector2(0, 90), 0.3f);
 
     // --------------------------------------------------------------- detector
 
@@ -210,17 +252,45 @@ public class TrainingUI : MonoBehaviour
         rt.gameObject.SetActive(false);
     }
 
-    /// <summary>0..1 fill of the air-test bar (RectTransform width based).</summary>
+    /// <summary>0..1 fill of the air-test bar. The bar glides to the value (animated in Update).</summary>
     public void SetAirTestProgress(float k, string label)
     {
-        Detector.progressRoot.SetActive(true);
-        var parent = (RectTransform)Detector.progressRoot.transform;
-        var fill = Detector.progressFill.rectTransform;
-        fill.sizeDelta = new Vector2(parent.rect.width * Mathf.Clamp01(k), 0);
-        Detector.progressLabel.text = label;
+        if (!IsShown(Detector.progressRoot))
+        {
+            airShown = 0f;
+            ShowPanel(Detector.progressRoot, true, new Vector2(0, -20), 0.25f);
+        }
+        airTarget = Mathf.Clamp01(k);
+        if (label != lastAirLabel)
+        {
+            lastAirLabel = label;
+            Detector.progressLabel.text = label;
+            if (label == "AIR SAFE")
+            {
+                airShown = airTarget;
+                Spring(Detector.progressRoot).Punch(0.15f);
+            }
+        }
     }
 
-    public void HideAirTestProgress() => Detector.progressRoot.SetActive(false);
+    public void HideAirTestProgress()
+    {
+        lastAirLabel = "";
+        ShowPanel(Detector.progressRoot, false, new Vector2(0, -20), 0.25f);
+    }
+
+    /// <summary>Status pill text + colour. The colour blends, and the pill bounces when the level changes.</summary>
+    public void SetDetectorStatus(string text, Color color)
+    {
+        pillTarget = color;
+        if (text == lastStatus) return;
+        bool worse = text == "DANGER" || (text == "WARNING" && lastStatus == "SAFE");
+        lastStatus = text;
+        Detector.status.text = text;
+        var s = Spring(Detector.statusPill.gameObject);
+        s.Punch(worse ? 0.22f : 0.1f);
+        if (text == "DANGER") Spring(Detector.root).Wiggle(2.5f);
+    }
 
     // ---------------------------------------------------------------- buttons
 
@@ -242,16 +312,16 @@ public class TrainingUI : MonoBehaviour
     public void ShowPlaceButton(bool show, Action onClick = null)
     {
         placeAction = onClick;
-        placeButton.SetActive(show);
+        ShowPanel(placeButton, show, new Vector2(0, -80), 0.35f, 0.15f);
     }
 
     public void ShowAlarmButton(bool show, Action onClick = null)
     {
         alarmAction = onClick;
-        alarmButton.SetActive(show);
+        ShowPanel(alarmButton, show, new Vector2(120, 0), 0.3f, 0.3f);
     }
 
-    public void ShowDetector(bool show) => Detector.root.SetActive(show);
+    public void ShowDetector(bool show) => ShowPanel(Detector.root, show, new Vector2(-140, 0), 0.4f);
 
     // ------------------------------------------------------------------ toast
 
@@ -271,6 +341,17 @@ public class TrainingUI : MonoBehaviour
         rt.gameObject.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
         toastTitle = Label(rt, "", 42, Color.white, TextAlignmentOptions.Left, true);
         toastBody = Label(rt, "", 34, Color.white, TextAlignmentOptions.Left, false);
+
+        // Thin bar along the bottom that shrinks while the toast is showing
+        toastTimer = NewRect("Timer", rt);
+        toastTimer.gameObject.AddComponent<LayoutElement>().ignoreLayout = true;
+        toastTimer.anchorMin = new Vector2(0, 0); toastTimer.anchorMax = new Vector2(1, 0);
+        toastTimer.pivot = new Vector2(0, 0);
+        toastTimer.offsetMin = new Vector2(30, 10); toastTimer.offsetMax = new Vector2(-30, 16);
+        var bar = toastTimer.gameObject.AddComponent<Image>();
+        bar.color = new Color(1, 1, 1, 0.45f);
+        bar.raycastTarget = false;
+
         toastRoot = rt.gameObject;
         toastRoot.SetActive(false);
     }
@@ -279,19 +360,44 @@ public class TrainingUI : MonoBehaviour
     {
         Color c = kind == ToastKind.Good ? Green : kind == ToastKind.Bad ? Red : kind == ToastKind.Warning ? Amber : Dark;
         c.a = 0.96f;
-        toastBg.color = c;
         toastTitle.text = title;
         toastBody.text = body;
         toastBody.gameObject.SetActive(!string.IsNullOrEmpty(body));
-        toastRoot.SetActive(true);
+
+        var spring = Spring(toastRoot);
+        if (IsShown(toastRoot))
+        {
+            ColorTo(toastBg, c, 0.15f);
+            spring.Punch(0.06f);
+        }
+        else
+        {
+            toastBg.color = c;
+            ShowPanel(toastRoot, true, new Vector2(0, -70), 0.3f, 0.12f);
+        }
+        if (kind == ToastKind.Bad) spring.Wiggle(4f);
+
+        var fx = EffectsManager.Instance;
+        if (fx != null)
+        {
+            if (kind == ToastKind.Good) fx.Chime();
+            else if (kind == ToastKind.Bad) fx.Buzz();
+        }
+
         if (toastRoutine != null) StopCoroutine(toastRoutine);
         toastRoutine = StartCoroutine(HideToastLater(seconds));
     }
 
     IEnumerator HideToastLater(float seconds)
     {
-        yield return new WaitForSeconds(seconds);
-        toastRoot.SetActive(false);
+        float t = 0f;
+        while (t < seconds)
+        {
+            t += Time.unscaledDeltaTime;
+            toastTimer.localScale = new Vector3(1f - Mathf.Clamp01(t / seconds), 1f, 1f);
+            yield return null;
+        }
+        ShowPanel(toastRoot, false, new Vector2(0, -70), 0.3f);
         toastRoutine = null;
     }
 
@@ -299,7 +405,7 @@ public class TrainingUI : MonoBehaviour
     {
         if (toastRoutine != null) StopCoroutine(toastRoutine);
         toastRoutine = null;
-        toastRoot.SetActive(false);
+        ShowPanel(toastRoot, false, new Vector2(0, -70), 0.25f);
     }
 
     // ------------------------------------------------------------------ modal
@@ -322,6 +428,7 @@ public class TrainingUI : MonoBehaviour
         v.childControlWidth = true; v.childControlHeight = true;
         v.childForceExpandWidth = true; v.childForceExpandHeight = false;
         modalCard.gameObject.AddComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+        modalCardGroup = modalCard.gameObject.AddComponent<CanvasGroup>();
 
         modalRoot = scrim.gameObject;
         modalRoot.SetActive(false);
@@ -330,12 +437,49 @@ public class TrainingUI : MonoBehaviour
     RectTransform OpenModal()
     {
         for (int i = modalCard.childCount - 1; i >= 0; i--)
-            Destroy(modalCard.GetChild(i).gameObject);
-        modalRoot.SetActive(true);
+        {
+            var child = modalCard.GetChild(i);
+            child.SetParent(null, false);     // out of the layout right away
+            Destroy(child.gameObject);
+        }
+        modalCardGroup.alpha = 0f;            // stays hidden until the content is built
+        ShowPanel(modalRoot, true, Vector2.zero, 0.25f);
+        modalToken++;
+        StartCoroutine(ModalIn(modalToken));
         return modalCard;
     }
 
-    public void CloseModal() => modalRoot.SetActive(false);
+    /// <summary>Card pops in, then its lines fade in one after another.</summary>
+    IEnumerator ModalIn(int token)
+    {
+        yield return null;                    // the caller fills the card this frame
+        if (token != modalToken) yield break;
+
+        var kids = new List<Transform>();
+        foreach (Transform k in modalCard) kids.Add(k);
+        foreach (var k in kids) Group(k.gameObject).alpha = 0f;
+
+        Spring(modalCard.gameObject).SetScale(0.88f);
+        StartCoroutine(FadeGroup(modalCardGroup, 1f, 0.22f, 0f));
+        for (int i = 0; i < kids.Count; i++)
+            StartCoroutine(FadeChildIn(kids[i], 0.08f + i * 0.05f));
+    }
+
+    IEnumerator FadeChildIn(Transform child, float delay)
+    {
+        float t = 0f;
+        while (t < delay) { t += Time.unscaledDeltaTime; yield return null; }
+        if (child == null) yield break;
+        if (child.gameObject.activeInHierarchy) Spring(child.gameObject).SetScale(0.94f);
+        yield return FadeGroup(Group(child.gameObject), 1f, 0.25f, 0f);
+    }
+
+    public void CloseModal()
+    {
+        modalToken++;
+        Spring(modalCard.gameObject).Punch(-0.06f);
+        ShowPanel(modalRoot, false, Vector2.zero, 0.22f);
+    }
 
     /// <summary>Simple message card with one button.</summary>
     public void ShowMessage(string title, string body, string buttonLabel, Color accent, Action onContinue)
@@ -386,16 +530,24 @@ public class TrainingUI : MonoBehaviour
                 if (solved) return;
                 attempts++;
                 bool right = index == correctIndex;
-                b.GetComponent<Image>().color = right ? Green : Red;
+                ColorTo(b.GetComponent<Image>(), right ? Green : Red, 0.18f);
                 b.interactable = false;
+                var spring = Spring(b.gameObject);
+                if (right) spring.Punch(0.1f); else spring.Wiggle(4f);
+
                 explain.gameObject.SetActive(true);
                 explain.color = right ? new Color32(140, 235, 180, 255) : new Color32(255, 170, 170, 255);
                 explain.text = (right ? "Correct. " : "Wrong. ") + explanations[index];
+                StartCoroutine(FadeTextIn(explain, 0.3f));
+
+                var fx = EffectsManager.Instance;
+                if (fx != null) { if (right) fx.Chime(); else fx.Buzz(); }
+
                 if (right)
                 {
                     solved = true;
                     foreach (var other in buttons) other.interactable = false;
-                    cont.SetActive(true);
+                    PopIn(cont, 0.15f);
                 }
             });
         }
@@ -446,10 +598,19 @@ public class TrainingUI : MonoBehaviour
             for (int k = 0; k < items.Length; k++)
             {
                 if (selected[k]) n++;
-                cardImages[k].color = selected[k] ? picked : normal;
-                ticks[k].SetActive(selected[k]);
+                ColorTo(cardImages[k], selected[k] ? picked : normal, 0.15f);
+                if (ticks[k].activeSelf != selected[k])
+                {
+                    if (selected[k]) PopIn(ticks[k], 0.4f);
+                    else ticks[k].SetActive(false);
+                }
             }
-            counter.text = n + " / " + needed;
+            string text = n + " / " + needed;
+            if (counter.text != text)
+            {
+                counter.text = text;
+                Spring(counter.gameObject).Punch(0.15f);
+            }
         };
 
         for (int i = 0; i < items.Length; i++)
@@ -459,6 +620,7 @@ public class TrainingUI : MonoBehaviour
             cardImages[i] = AddImage(cell.gameObject, normal);
             var btn = cell.gameObject.AddComponent<Button>();
             btn.transition = Selectable.Transition.None;
+            Spring(cell.gameObject).pressable = true;
 
             var iconRt = NewRect("Icon", cell);
             Place(iconRt, 0.5f, 1, 0.5f, 1, new Vector2(0, -24), new Vector2(210, 210), new Vector2(0.5f, 1));
@@ -475,11 +637,13 @@ public class TrainingUI : MonoBehaviour
             tick.texture = Resources.Load<Texture2D>("PPE/tick");
             tick.raycastTarget = false;
             ticks[i] = tickRt.gameObject;
+            ticks[i].SetActive(false);
 
             btn.onClick.AddListener(() =>
             {
                 if (done) return;
                 selected[index] = !selected[index];
+                Spring(cell.gameObject).Punch(0.06f);
                 feedback.gameObject.SetActive(false);
                 refresh();
             });
@@ -506,24 +670,33 @@ public class TrainingUI : MonoBehaviour
                 if (selected[k] && !items[k].correct)
                 {
                     wrongPicks++;
-                    cardImages[k].color = wrong;
+                    ColorTo(cardImages[k], wrong, 0.2f);
+                    Spring(cardImages[k].gameObject).Wiggle(5f);
                     lines.Add("<b>" + items[k].label + "</b> - " + items[k].why);
                 }
                 else if (!selected[k] && items[k].correct) missing++;
             }
 
             feedback.gameObject.SetActive(true);
+            StartCoroutine(FadeTextIn(feedback, 0.3f));
+            var fx = EffectsManager.Instance;
             if (wrongPicks == 0 && missing == 0)
             {
                 done = true;
+                if (fx != null) fx.Chime();
+                for (int k = 0; k < items.Length; k++)
+                    if (items[k].correct) Spring(cardImages[k].gameObject).Punch(0.1f);
                 feedback.color = new Color32(140, 235, 180, 255);
                 var ok = new List<string> { "<b>Correct.</b>" };
                 foreach (var it in items) if (it.correct) ok.Add("<b>" + it.label + "</b> - " + it.why);
                 feedback.text = string.Join("\n", ok);
                 confirm.GetComponentInChildren<TextMeshProUGUI>().text = "CONTINUE";
+                Spring(confirm.gameObject).Punch(0.1f);
                 return;
             }
 
+            if (fx != null) fx.Buzz();
+            if (wrongPicks == 0) Spring(counter.gameObject).Wiggle(5f);
             mistakes += wrongPicks + missing;
             if (missing > 0)
                 lines.Add(missing == 1 ? "1 item missing." : missing + " items missing.");
@@ -548,20 +721,52 @@ public class TrainingUI : MonoBehaviour
         raw.raycastTarget = false;
     }
 
-    /// <summary>Final score card with RETRY and EXIT.</summary>
+    /// <summary>Final score card with RETRY and EXIT. The score counts up, then the rating pops in.</summary>
     public void ShowResults(int score, string rating, string responseTime, List<string> lines, Action onRetry, Action onExit)
     {
         var card = OpenModal();
         AddLogo(card, 60);
         Label(card, "RESULT", 30, Muted, TextAlignmentOptions.Center, true).characterSpacing = 6;
-        Label(card, score + " / 100", 110, Color.white, TextAlignmentOptions.Center, true);
+        var scoreLabel = Label(card, "0 / 100", 110, Color.white, TextAlignmentOptions.Center, true);
         Color rc = rating == "EXCELLENT" ? Green : rating == "GOOD" ? Amber : Red;
-        Label(card, rating, 52, rc, TextAlignmentOptions.Center, true);
+        var ratingLabel = Label(card, rating, 52, rc, TextAlignmentOptions.Center, true);
+        ratingLabel.alpha = 0f;
         if (!string.IsNullOrEmpty(responseTime))
             Label(card, responseTime, 34, Muted, TextAlignmentOptions.Center, false);
         Label(card, string.Join("\n", lines), 32, Color.white, TextAlignmentOptions.Left, false).lineSpacing = 12;
         AddButton(card, "RETRY", Orange, 150, () => { CloseModal(); onRetry?.Invoke(); });
         AddButton(card, "EXIT", new Color(1, 1, 1, 0.12f), 120, () => { CloseModal(); onExit?.Invoke(); }, 38);
+
+        StartCoroutine(CountUp(scoreLabel, ratingLabel, score));
+    }
+
+    IEnumerator CountUp(TextMeshProUGUI scoreLabel, TextMeshProUGUI ratingLabel, int score)
+    {
+        float t = 0f;
+        while (t < 0.45f) { t += Time.unscaledDeltaTime; yield return null; }
+
+        float dur = Mathf.Lerp(0.6f, 1.6f, score / 100f);
+        int shown = -1;
+        t = 0f;
+        while (t < dur && scoreLabel != null)
+        {
+            t += Time.unscaledDeltaTime;
+            int v = Mathf.RoundToInt(score * Easing.OutCubic(t / dur));
+            if (v != shown)
+            {
+                shown = v;
+                scoreLabel.text = v + " / 100";
+            }
+            yield return null;
+        }
+        if (scoreLabel == null) yield break;
+        scoreLabel.text = score + " / 100";
+        Spring(scoreLabel.gameObject).Punch(0.12f);
+
+        ratingLabel.alpha = 1f;
+        Spring(ratingLabel.gameObject).SetScale(0.4f);
+        var fx = EffectsManager.Instance;
+        if (fx != null) { if (score >= 50) fx.Chime(); else fx.Buzz(); }
     }
 
     // ------------------------------------------------------- danger edge/flash
@@ -574,29 +779,208 @@ public class TrainingUI : MonoBehaviour
         dangerEdge.texture = MakeVignette(128);
         dangerEdge.raycastTarget = false;
         dangerEdge.color = new Color(1, 0, 0, 0);
+
+        // Soft full-screen tint used by Flash() (under all panels)
+        var tint = NewRect("ScreenTint", canvasRect);
+        Stretch(tint);
+        screenTint = tint.gameObject.AddComponent<Image>();
+        screenTint.raycastTarget = false;
+        screenTint.color = new Color(1, 0, 0, 0);
     }
 
     public void SetDanger(bool on) => dangerOn = on;
 
-    /// <summary>A quick full-edge flash (e.g. when the alarm goes off).</summary>
-    public void Flash(Color c)
+    /// <summary>A quick full-edge flash (e.g. when the alarm goes off). 'pulses' repeats it.</summary>
+    public void Flash(Color c, int pulses = 1)
     {
-        flashColor = c;
-        flashAlpha = 1f;
+        StartCoroutine(FlashRoutine(c, Mathf.Max(1, pulses)));
+    }
+
+    IEnumerator FlashRoutine(Color c, int pulses)
+    {
+        for (int i = 0; i < pulses; i++)
+        {
+            flashColor = c;
+            flashAlpha = 1f;
+            float t = 0f;
+            while (t < 0.32f) { t += Time.unscaledDeltaTime; yield return null; }
+        }
     }
 
     void Update()
     {
-        float a = 0f;
+        float dt = Time.unscaledDeltaTime;
+
+        // Danger edge: eases in/out instead of switching on and off
+        dangerK = Mathf.MoveTowards(dangerK, dangerOn ? 1f : 0f, dt * 3f);
+        float a = dangerK * (0.55f + 0.35f * Mathf.Sin(Time.time * 8f));
         Color c = Red;
-        if (dangerOn) a = 0.55f + 0.35f * Mathf.Sin(Time.time * 8f);
         if (flashAlpha > 0f)
         {
-            flashAlpha = Mathf.Max(0f, flashAlpha - Time.deltaTime * 1.2f);
-            if (flashAlpha > a) { a = flashAlpha; c = flashColor; }
+            flashAlpha = Mathf.Max(0f, flashAlpha - dt * 1.6f);
+            float f = Easing.OutCubic(flashAlpha);
+            if (f > a) { a = f; c = flashColor; }
         }
         c.a = a;
         dangerEdge.color = c;
+
+        Color tc = flashColor;
+        tc.a = 0.28f * flashAlpha * flashAlpha;
+        screenTint.color = tc;
+
+        // Detector pill colour blends; in DANGER it breathes brighter/darker
+        if (Detector != null && Detector.root.activeSelf)
+        {
+            Color target = pillTarget;
+            if (lastStatus == "DANGER")
+                target = Color.Lerp(pillTarget, new Color(1f, 0.55f, 0.55f), 0.25f + 0.25f * Mathf.Sin(Time.time * 10f));
+            Detector.statusPill.color = Color.Lerp(Detector.statusPill.color, target, Easing.Damp(12f, dt));
+
+            // Air-test bar glides to its value; fills amber -> green
+            if (Detector.progressRoot.activeSelf)
+            {
+                airShown = Mathf.Lerp(airShown, airTarget, Easing.Damp(airTarget < airShown ? 14f : 9f, dt));
+                var parent = (RectTransform)Detector.progressRoot.transform;
+                Detector.progressFill.rectTransform.sizeDelta = new Vector2(parent.rect.width * airShown, 0);
+                Detector.progressFill.color = Color.Lerp(Amber, Green, airShown);
+            }
+        }
+
+        // RAISE ALARM breathes to draw the eye
+        if (alarmButton.activeSelf)
+            Spring(alarmButton).restScale = 1f + 0.045f * Mathf.Sin(Time.time * 7f);
+    }
+
+    // ============================================================ animation
+
+    bool IsShown(GameObject go) => go.activeSelf && !hiding.Contains(go);
+
+    /// <summary>
+    /// Fades a panel in/out with a short slide from 'slide' (pixels, relative to its
+    /// home position). 'pop' > 0 also springs the scale up from (1 - pop).
+    /// </summary>
+    void ShowPanel(GameObject go, bool show, Vector2 slide, float duration, float pop = 0f)
+    {
+        if (show == IsShown(go)) return;
+        var rt = (RectTransform)go.transform;
+        if (!homePos.ContainsKey(rt)) homePos[rt] = rt.anchoredPosition;
+        if (panelAnims.TryGetValue(go, out var running) && running != null) StopCoroutine(running);
+        panelAnims[go] = StartCoroutine(PanelRoutine(go, rt, show, slide, duration, pop));
+    }
+
+    IEnumerator PanelRoutine(GameObject go, RectTransform rt, bool show, Vector2 slide, float duration, float pop)
+    {
+        var cg = Group(go);
+        Vector2 home = homePos[rt];
+        if (show)
+        {
+            hiding.Remove(go);
+            if (!go.activeSelf)
+            {
+                cg.alpha = 0f;
+                rt.anchoredPosition = home + slide;
+                go.SetActive(true);
+            }
+            cg.blocksRaycasts = true;
+            cg.interactable = true;
+            if (pop > 0f) Spring(go).SetScale(1f - pop);
+        }
+        else
+        {
+            hiding.Add(go);
+            cg.blocksRaycasts = false;      // taps go straight through while it fades
+            cg.interactable = false;
+        }
+
+        float a0 = cg.alpha, a1 = show ? 1f : 0f;
+        Vector2 p0 = rt.anchoredPosition, p1 = show ? home : home + slide * 0.6f;
+        float t = 0f;
+        while (t < duration)
+        {
+            t += Time.unscaledDeltaTime;
+            float k = Easing.OutCubic(t / duration);
+            cg.alpha = Mathf.Lerp(a0, a1, k);
+            rt.anchoredPosition = Vector2.LerpUnclamped(p0, p1, k);
+            yield return null;
+        }
+        cg.alpha = a1;
+        rt.anchoredPosition = home;
+        if (!show)
+        {
+            go.SetActive(false);
+            hiding.Remove(go);
+        }
+        panelAnims.Remove(go);
+    }
+
+    IEnumerator FadeGroup(CanvasGroup cg, float to, float duration, float delay)
+    {
+        float t = 0f;
+        while (t < delay) { t += Time.unscaledDeltaTime; yield return null; }
+        float from = cg.alpha;
+        t = 0f;
+        while (t < duration && cg != null)
+        {
+            t += Time.unscaledDeltaTime;
+            cg.alpha = Mathf.Lerp(from, to, Easing.OutCubic(t / duration));
+            yield return null;
+        }
+        if (cg != null) cg.alpha = to;
+    }
+
+    IEnumerator FadeTextIn(TMP_Text text, float duration)
+    {
+        float t = 0f;
+        text.alpha = 0f;
+        while (t < duration && text != null)
+        {
+            t += Time.unscaledDeltaTime;
+            text.alpha = Easing.OutCubic(t / duration);
+            yield return null;
+        }
+        if (text != null) text.alpha = 1f;
+    }
+
+    /// <summary>Activates an element and springs it up from a smaller size.</summary>
+    void PopIn(GameObject go, float from)
+    {
+        go.SetActive(true);
+        Group(go).alpha = 1f;
+        Spring(go).SetScale(from);
+    }
+
+    /// <summary>Smoothly blends a UI colour (restarts if called again for the same graphic).</summary>
+    void ColorTo(Graphic g, Color to, float duration)
+    {
+        if (g == null) return;
+        if (colorAnims.TryGetValue(g, out var running) && running != null) StopCoroutine(running);
+        colorAnims[g] = StartCoroutine(ColorRoutine(g, to, duration));
+    }
+
+    IEnumerator ColorRoutine(Graphic g, Color to, float duration)
+    {
+        Color from = g.color;
+        float t = 0f;
+        while (t < duration && g != null)
+        {
+            t += Time.unscaledDeltaTime;
+            g.color = Color.Lerp(from, to, Easing.OutCubic(t / duration));
+            yield return null;
+        }
+        if (g != null) g.color = to;
+        colorAnims.Remove(g);
+    }
+
+    static UISpring Spring(GameObject go)
+    {
+        var s = go.GetComponent<UISpring>();
+        return s != null ? s : go.AddComponent<UISpring>();
+    }
+
+    static CanvasGroup Group(GameObject go)
+    {
+        var g = go.GetComponent<CanvasGroup>();
+        return g != null ? g : go.AddComponent<CanvasGroup>();
     }
 
     // ================================================================ helpers
@@ -660,7 +1044,9 @@ public class TrainingUI : MonoBehaviour
         var colors = b.colors;
         colors.pressedColor = new Color(0.8f, 0.8f, 0.8f, 1f);
         colors.disabledColor = Color.white;   // keep our red/green tint when disabled
+        colors.fadeDuration = 0.08f;
         b.colors = colors;
+        Spring(rt.gameObject).pressable = true;
         var t = Label(rt, label, fontSize, fg, align, true);
         Stretch(t.rectTransform);
         t.margin = new Vector4(36, 12, 36, 12);

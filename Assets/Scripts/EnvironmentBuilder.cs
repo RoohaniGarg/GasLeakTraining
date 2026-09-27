@@ -16,13 +16,14 @@ using UnityEngine.Rendering;
 /// ConfinedSpace, RetrievalTripod) becomes a clean unit-scale object with ONE
 /// collider (the tap hitbox) and visual children with NO colliders.
 /// </summary>
-public static class EnvironmentBuilder
+public static partial class EnvironmentBuilder
 {
     const string MatFolder = "Assets/Materials/Props";
 
     // Materials
     static Material pipeYellow, steel, darkSteel, lpgRed, valveRed, white, concrete,
         holeBlack, vestOrange, reflective, navy, skin, helmetYellow, bootBlack,
+        shirtBlue, gloveTan, hairBlack, eyeDark, visorBlue,
         safeGreen, signYellow, signRed, ropeOrange, floorLine,
         gasParticle, zoneRed, zoneAmber, markerRed;
 
@@ -258,29 +259,90 @@ public static class EnvironmentBuilder
     }
 
     // Worker "Ramesh": boots, trousers, hi-vis vest with stripes, arms, head, hard hat
+    // Ramesh: a jointed low-poly worker (hips, knees, spine, neck, shoulders, elbows)
+    // so WorkerAnimator can walk, climb, collapse and lie him down naturally.
+    // Height ~0.36 (1.8 m at 1:5 scale). Faces +Z (towards the manhole).
     static void BuildWorker(Transform root)
     {
-        // Faces the confined space (+X, +Z direction)
         Transform t = Hitbox(root, "WorkerPlaceholder", new Vector3(-0.25f, 0, -0.15f), 56f);
         var col = t.gameObject.AddComponent<CapsuleCollider>();
-        col.center = new Vector3(0, 0.17f, 0); col.radius = 0.05f; col.height = 0.34f; col.direction = 1;
+        col.center = new Vector3(0, 0.18f, 0); col.radius = 0.05f; col.height = 0.36f; col.direction = 1;
+
+        // Phase 9: real rigged character (Mixamo) if its files are in Assets/Characters/Ramesh
+        if (TryBuildRameshModel(t)) return;
+
+        // Fallback: jointed figure made of simple shapes
+        // Pelvis pivot - moving/rotating it moves the whole body
+        Transform body = Joint(t, "Body", new Vector3(0, 0.18f, 0));
+        Part(body, "Pelvis", PrimitiveType.Cube, new Vector3(0, 0.002f, 0), new Vector3(0.072f, 0.036f, 0.044f), navy);
+        Part(body, "Belt", PrimitiveType.Cube, new Vector3(0, 0.02f, 0), new Vector3(0.069f, 0.008f, 0.043f), bootBlack);
+        Part(body, "Buckle", PrimitiveType.Cube, new Vector3(0, 0.02f, 0.022f), new Vector3(0.01f, 0.007f, 0.003f), steel);
 
         foreach (float s in new[] { -1f, 1f })
         {
             string side = s < 0 ? "L" : "R";
-            Part(t, "Boot" + side, PrimitiveType.Cube, new Vector3(0.022f * s, 0.01f, 0.008f), new Vector3(0.03f, 0.02f, 0.05f), bootBlack);
-            Part(t, "Leg" + side, PrimitiveType.Cylinder, new Vector3(0.022f * s, 0.09f, 0), new Vector3(0.032f, 0.07f, 0.032f), navy);
-            Part(t, "Arm" + side, PrimitiveType.Capsule, new Vector3(0.055f * s, 0.215f, 0), new Vector3(0.024f, 0.045f, 0.024f), vestOrange);
-            Part(t, "Hand" + side, PrimitiveType.Sphere, new Vector3(0.055f * s, 0.165f, 0), new Vector3(0.022f, 0.022f, 0.022f), skin);
+            Transform hip = Joint(body, "Hip_" + side, new Vector3(0.019f * s, -0.008f, 0));
+            Part(hip, "Thigh", PrimitiveType.Capsule, new Vector3(0, -0.041f, 0), new Vector3(0.034f, 0.045f, 0.035f), navy);
+            Transform knee = Joint(hip, "Knee", new Vector3(0, -0.082f, 0));
+            Part(knee, "Shin", PrimitiveType.Capsule, new Vector3(0, -0.037f, 0), new Vector3(0.029f, 0.041f, 0.03f), navy);
+            Part(knee, "Boot", PrimitiveType.Cube, new Vector3(0, -0.08f, 0.002f), new Vector3(0.03f, 0.02f, 0.036f), bootBlack);
+            Part(knee, "BootToe", PrimitiveType.Cube, new Vector3(0, -0.0835f, 0.021f), new Vector3(0.029f, 0.013f, 0.02f), bootBlack);
         }
-        Part(t, "Hips", PrimitiveType.Cube, new Vector3(0, 0.165f, 0), new Vector3(0.075f, 0.03f, 0.045f), navy);
-        Part(t, "Torso", PrimitiveType.Capsule, new Vector3(0, 0.225f, 0), new Vector3(0.085f, 0.055f, 0.055f), vestOrange);
-        Part(t, "StripeLow", PrimitiveType.Cube, new Vector3(0, 0.205f, 0), new Vector3(0.088f, 0.008f, 0.058f), reflective);
-        Part(t, "StripeHigh", PrimitiveType.Cube, new Vector3(0, 0.24f, 0), new Vector3(0.088f, 0.008f, 0.058f), reflective);
-        Part(t, "Neck", PrimitiveType.Cylinder, new Vector3(0, 0.285f, 0), new Vector3(0.02f, 0.01f, 0.02f), skin);
-        Part(t, "Head", PrimitiveType.Sphere, new Vector3(0, 0.305f, 0), new Vector3(0.045f, 0.045f, 0.045f), skin);
-        Part(t, "Helmet", PrimitiveType.Sphere, new Vector3(0, 0.318f, 0), new Vector3(0.052f, 0.036f, 0.052f), helmetYellow);
-        Part(t, "HelmetBrim", PrimitiveType.Cylinder, new Vector3(0, 0.315f, 0.005f), new Vector3(0.064f, 0.003f, 0.064f), helmetYellow);
+
+        Transform spine = Joint(body, "Spine", new Vector3(0, 0.02f, 0));
+        Part(spine, "Belly", PrimitiveType.Capsule, new Vector3(0, 0.033f, 0), new Vector3(0.064f, 0.033f, 0.042f), vestOrange);
+        Part(spine, "Chest", PrimitiveType.Capsule, new Vector3(0, 0.068f, 0), new Vector3(0.076f, 0.034f, 0.048f), vestOrange);
+        Part(spine, "StripeLow", PrimitiveType.Cube, new Vector3(0, 0.042f, 0), new Vector3(0.068f, 0.007f, 0.046f), reflective);
+        Part(spine, "StripeHigh", PrimitiveType.Cube, new Vector3(0, 0.078f, 0), new Vector3(0.078f, 0.007f, 0.051f), reflective);
+        Part(spine, "Collar", PrimitiveType.Cylinder, new Vector3(0, 0.099f, 0), new Vector3(0.034f, 0.005f, 0.03f), shirtBlue);
+        Part(spine, "Pocket", PrimitiveType.Cube, new Vector3(-0.018f, 0.064f, 0.024f), new Vector3(0.016f, 0.016f, 0.003f), vestOrange);
+
+        Transform neck = Joint(spine, "Neck", new Vector3(0, 0.102f, 0));
+        Part(neck, "NeckSkin", PrimitiveType.Cylinder, new Vector3(0, 0.006f, 0), new Vector3(0.018f, 0.008f, 0.018f), skin);
+        Part(neck, "Head", PrimitiveType.Sphere, new Vector3(0, 0.029f, 0.002f), new Vector3(0.039f, 0.046f, 0.042f), skin);
+        Part(neck, "Hair", PrimitiveType.Sphere, new Vector3(0, 0.033f, -0.005f), new Vector3(0.04f, 0.04f, 0.04f), hairBlack);
+        Part(neck, "Ear_L", PrimitiveType.Sphere, new Vector3(-0.02f, 0.029f, 0), new Vector3(0.006f, 0.011f, 0.008f), skin);
+        Part(neck, "Ear_R", PrimitiveType.Sphere, new Vector3(0.02f, 0.029f, 0), new Vector3(0.006f, 0.011f, 0.008f), skin);
+        Part(neck, "Eye_L", PrimitiveType.Sphere, new Vector3(-0.008f, 0.033f, 0.022f), new Vector3(0.0045f, 0.0045f, 0.004f), eyeDark);
+        Part(neck, "Eye_R", PrimitiveType.Sphere, new Vector3(0.008f, 0.033f, 0.022f), new Vector3(0.0045f, 0.0045f, 0.004f), eyeDark);
+        Part(neck, "Brow", PrimitiveType.Cube, new Vector3(0, 0.039f, 0.021f), new Vector3(0.024f, 0.003f, 0.003f), hairBlack);
+        Part(neck, "Nose", PrimitiveType.Cube, new Vector3(0, 0.027f, 0.022f), new Vector3(0.005f, 0.01f, 0.005f), skin);
+        Part(neck, "Moustache", PrimitiveType.Cube, new Vector3(0, 0.02f, 0.0215f), new Vector3(0.014f, 0.003f, 0.003f), hairBlack);
+        Part(neck, "Helmet", PrimitiveType.Sphere, new Vector3(0, 0.045f, 0), new Vector3(0.047f, 0.033f, 0.05f), helmetYellow);
+        Part(neck, "HelmetBrim", PrimitiveType.Cylinder, new Vector3(0, 0.043f, 0.004f), new Vector3(0.056f, 0.003f, 0.06f), helmetYellow);
+        Part(neck, "HelmetRidge", PrimitiveType.Cube, new Vector3(0, 0.06f, 0), new Vector3(0.006f, 0.005f, 0.046f), helmetYellow);
+
+        foreach (float s in new[] { -1f, 1f })
+        {
+            string side = s < 0 ? "L" : "R";
+            Transform sh = Joint(spine, "Shoulder_" + side, new Vector3(0.042f * s, 0.086f, 0));
+            Part(sh, "UpperArm", PrimitiveType.Capsule, new Vector3(0, -0.027f, 0), new Vector3(0.026f, 0.031f, 0.026f), shirtBlue);
+            Part(sh, "Shoulder", PrimitiveType.Sphere, new Vector3(0, -0.002f, 0), new Vector3(0.026f, 0.024f, 0.026f), vestOrange);
+            Transform el = Joint(sh, "Elbow", new Vector3(0, -0.056f, 0));
+            Part(el, "Forearm", PrimitiveType.Capsule, new Vector3(0, -0.024f, 0), new Vector3(0.023f, 0.027f, 0.023f), shirtBlue);
+            Part(el, "Glove", PrimitiveType.Sphere, new Vector3(0, -0.053f, 0.002f), new Vector3(0.017f, 0.022f, 0.015f), gloveTan);
+        }
+
+        // Protective equipment - hidden until the trainee picks the right PPE (BuddyController.ShowPPE)
+        Part(spine, "PPE_Tank", PrimitiveType.Capsule, new Vector3(0, 0.06f, -0.037f), new Vector3(0.026f, 0.036f, 0.026f), pipeYellow);
+        Part(spine, "PPE_TankValve", PrimitiveType.Cylinder, new Vector3(0, 0.1f, -0.037f), new Vector3(0.009f, 0.006f, 0.009f), steel);
+        Part(spine, "PPE_StrapL", PrimitiveType.Cube, new Vector3(-0.02f, 0.06f, 0.001f), new Vector3(0.008f, 0.085f, 0.054f), bootBlack, new Vector3(0, 0, -8));
+        Part(spine, "PPE_StrapR", PrimitiveType.Cube, new Vector3(0.02f, 0.06f, 0.001f), new Vector3(0.008f, 0.085f, 0.054f), bootBlack, new Vector3(0, 0, 8));
+        Part(spine, "PPE_DRing", PrimitiveType.Cylinder, new Vector3(0, 0.086f, -0.058f), new Vector3(0.011f, 0.002f, 0.011f), steel, new Vector3(90, 0, 0));
+        Part(spine, "PPE_Detector", PrimitiveType.Cube, new Vector3(-0.021f, 0.066f, 0.028f), new Vector3(0.014f, 0.02f, 0.006f), signYellow);
+        Part(neck, "PPE_Mask", PrimitiveType.Cube, new Vector3(0, 0.024f, 0.021f), new Vector3(0.03f, 0.024f, 0.008f), darkSteel);
+        Part(neck, "PPE_Visor", PrimitiveType.Cube, new Vector3(0, 0.034f, 0.0235f), new Vector3(0.026f, 0.01f, 0.003f), visorBlue);
+        Part(neck, "PPE_Regulator", PrimitiveType.Cylinder, new Vector3(0, 0.017f, 0.027f), new Vector3(0.01f, 0.004f, 0.01f), steel, new Vector3(90, 0, 0));
+    }
+
+    static Transform Joint(Transform parent, string name, Vector3 pos)
+    {
+        var j = new GameObject(name).transform;
+        j.SetParent(parent, false);
+        j.localPosition = pos;
+        j.localRotation = Quaternion.identity;
+        j.localScale = Vector3.one;
+        return j;
     }
 
     // Manhole / valve chamber opening with open lid and danger sign
@@ -360,7 +422,19 @@ public static class EnvironmentBuilder
         MakeInteractable(root, "WorkerPlaceholder", InteractableId.Worker, "Ramesh (your buddy)");
 
         Transform worker = root.Find("WorkerPlaceholder");
-        GetOrAdd<BuddyController>(worker.gameObject);
+        var buddyCtl = GetOrAdd<BuddyController>(worker.gameObject);
+        buddyCtl.walkSpeed = 0.14f;         // Phase 9: a bit quicker (was 0.1)
+        buddyCtl.weakWalkSpeed = 0.09f;     // was 0.055 - took ~15 s to reach the assembly point
+        buddyCtl.turnSpeed = 220f;
+        buddyCtl.collarHeight = 0.045f;
+        buddyCtl.climbTime = 3.2f;
+        buddyCtl.pullTime = 3.5f;
+        buddyCtl.lieBack = 0.22f;           // lay him well clear of the manhole collar
+        // Assembly point: on the green disc (centre -0.36, -0.38, radius 0.08) but clear of
+        // the sign pole at z -0.32 - he used to stop right on top of it
+        buddyCtl.safeZone = new Vector3(-0.34f, 0f, -0.42f);
+        EditorUtility.SetDirty(buddyCtl);
+        GetOrAdd<WorkerAnimator>(worker.gameObject);
 
         Transform tripod = root.Find("RetrievalTripod");
         var line = GetOrAdd<LineRenderer>(tripod.gameObject);
@@ -371,7 +445,15 @@ public static class EnvironmentBuilder
         line.shadowCastingMode = ShadowCastingMode.Off;
         line.enabled = false;
         var life = GetOrAdd<Lifeline>(tripod.gameObject);
-        life.buddy = worker;
+        // Clip the rope to the D-ring on his upper back (follows his animated body)
+        Transform back = worker.Find("Body/Spine");
+        life.buddy = back != null ? back : worker;
+        life.buddyAttachLocal = back != null ? new Vector3(0, 0.086f, -0.06f) : new Vector3(0, 0.25f, -0.02f);
+        if (modelBackBone != null)
+        {
+            life.buddy = modelBackBone;             // Mixamo model: chest bone
+            life.buddyAttachLocal = modelBackLocal;
+        }
         life.width = 0.008f;   // Phase 6: thicker so it reads on a phone
         EditorUtility.SetDirty(life);
     }
@@ -472,6 +554,11 @@ public static class EnvironmentBuilder
         skin         = Mat("Prop_Skin",         new Color(0.78f, 0.57f, 0.42f), 0.0f, 0.3f);
         helmetYellow = Mat("Prop_HelmetYellow", new Color(1.00f, 0.85f, 0.10f), 0.1f, 0.7f);
         bootBlack    = Mat("Prop_BootBlack",    new Color(0.08f, 0.08f, 0.08f), 0.0f, 0.3f);
+        shirtBlue    = Mat("Prop_ShirtBlue",    new Color(0.24f, 0.32f, 0.45f), 0.0f, 0.2f);
+        gloveTan     = Mat("Prop_GloveTan",     new Color(0.62f, 0.48f, 0.30f), 0.0f, 0.2f);
+        hairBlack    = Mat("Prop_HairBlack",    new Color(0.05f, 0.04f, 0.04f), 0.0f, 0.3f);
+        eyeDark      = Mat("Prop_EyeDark",      new Color(0.03f, 0.03f, 0.03f), 0.0f, 0.8f);
+        visorBlue    = Mat("Prop_VisorBlue",    new Color(0.45f, 0.70f, 0.85f), 0.3f, 0.9f);
         safeGreen    = Mat("Prop_SafeGreen",    new Color(0.10f, 0.65f, 0.25f), 0.0f, 0.3f);
         signYellow   = Mat("Prop_SignYellow",   new Color(1.00f, 0.80f, 0.00f), 0.0f, 0.3f);
         signRed      = Mat("Prop_SignRed",      new Color(0.80f, 0.05f, 0.05f), 0.0f, 0.3f);

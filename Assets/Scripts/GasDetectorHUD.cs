@@ -132,13 +132,14 @@ public class GasDetectorHUD : MonoBehaviour
         var d = ui.Detector;
         d.o2Value.text = shownO2.ToString("0.0") + " %";
         d.lelValue.text = Mathf.Max(0f, shownLEL).ToString("0") + " %";
-        d.o2Value.color = shownO2 < 19.5f ? TrainingUI.Red : shownO2 < 20.5f ? TrainingUI.Amber : Color.white;
-        d.lelValue.color = shownLEL >= 10f ? TrainingUI.Red : shownLEL >= 5f ? TrainingUI.Amber : Color.white;
+        float blend = 1f - Mathf.Exp(-Time.deltaTime * 8f);
+        d.o2Value.color = Color.Lerp(d.o2Value.color, shownO2 < 19.5f ? TrainingUI.Red : shownO2 < 20.5f ? TrainingUI.Amber : Color.white, blend);
+        d.lelValue.color = Color.Lerp(d.lelValue.color, shownLEL >= 10f ? TrainingUI.Red : shownLEL >= 5f ? TrainingUI.Amber : Color.white, blend);
         switch (CurrentLevel)
         {
-            case Level.Danger: d.status.text = "DANGER"; d.statusPill.color = TrainingUI.Red; break;
-            case Level.Warning: d.status.text = "WARNING"; d.statusPill.color = TrainingUI.Amber; break;
-            default: d.status.text = "SAFE"; d.statusPill.color = TrainingUI.Green; break;
+            case Level.Danger: ui.SetDetectorStatus("DANGER", TrainingUI.Red); break;
+            case Level.Warning: ui.SetDetectorStatus("WARNING", TrainingUI.Amber); break;
+            default: ui.SetDetectorStatus("SAFE", TrainingUI.Green); break;
         }
 
         UpdateAirTest(dHole);

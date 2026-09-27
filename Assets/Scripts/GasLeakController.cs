@@ -34,10 +34,10 @@ public class GasLeakController : MonoBehaviour
     private ParticleSystem ps;
     private AudioSource audioSrc;
     private Transform cam;
-    private Renderer[] markerRenderers;
-    private float blinkTimer;
-    private bool markerVisible = true;
     private Coroutine fadeRoutine;
+    private Vector3 markerBaseScale = Vector3.one, markerBasePos;
+    private float markerAge;
+    private bool markerLeaving;
 
     void Awake()
     {
@@ -55,7 +55,8 @@ public class GasLeakController : MonoBehaviour
 
         if (hazardMarker != null)
         {
-            markerRenderers = hazardMarker.GetComponentsInChildren<Renderer>(true);
+            markerBaseScale = hazardMarker.transform.localScale;
+            markerBasePos = hazardMarker.transform.localPosition;
             hazardMarker.SetActive(false);
         }
     }
@@ -82,14 +83,23 @@ public class GasLeakController : MonoBehaviour
         IsLeaking = true;
         IsMajor = major;
 
+        // Ramp up from whatever is running now (a burst for the major leak, a gentle start for the small one)
         var emission = ps.emission;
-        emission.rateOverTime = major ? majorRate : minorRate;
-        if (!ps.isPlaying) ps.Play();
+        float fromRate = ps.isPlaying ? emission.rateOverTime.constant : 0f;
+        float fromVolume = audioSrc.isPlaying ? audioSrc.volume : 0f;
+        if (!ps.isPlaying) { emission.rateOverTime = 0f; ps.Play(); }
+        if (!audioSrc.isPlaying) { audioSrc.volume = 0f; audioSrc.Play(); }
+        if (major) ps.Emit(25);   // sudden puff as the joint gives way
+        fadeRoutine = StartCoroutine(Ramp(fromRate, major ? majorRate : minorRate,
+                                          fromVolume, major ? majorVolume : minorVolume,
+                                          major ? 1.2f : 1.5f, false));
 
-        audioSrc.volume = major ? majorVolume : minorVolume;
-        if (!audioSrc.isPlaying) audioSrc.Play();
-
-        if (hazardMarker != null) hazardMarker.SetActive(major);
+        if (hazardMarker != null)
+        {
+            if (major && !hazardMarker.activeSelf) { markerAge = 0f; hazardMarker.SetActive(true); }
+            else if (!major) hazardMarker.SetActive(false);
+            markerLeaving = false;
+        }
 
         Debug.Log("GasLeakController: " + (major ? "MAJOR" : "minor") + " leak started");
     }
@@ -99,27 +109,31 @@ public class GasLeakController : MonoBehaviour
         if (!IsLeaking) return;
         IsLeaking = false;
         IsMajor = false;
-        if (hazardMarker != null) hazardMarker.SetActive(false);
-        fadeRoutine = StartCoroutine(FadeOut());
+        if (hazardMarker != null && hazardMarker.activeSelf) { markerLeaving = true; markerAge = 0f; }
+        if (fadeRoutine != null) StopCoroutine(fadeRoutine);
+        fadeRoutine = StartCoroutine(Ramp(ps.emission.rateOverTime.constant, 0f, audioSrc.volume, 0f, fadeOutTime, true));
         Debug.Log("GasLeakController: leak stopping");
     }
 
-    IEnumerator FadeOut()
+    IEnumerator Ramp(float rate0, float rate1, float vol0, float vol1, float duration, bool stopAtEnd)
     {
         var emission = ps.emission;
-        float startRate = emission.rateOverTime.constant;
-        float startVolume = audioSrc.volume;
         float t = 0f;
-        while (t < fadeOutTime)
+        while (t < duration)
         {
             t += Time.deltaTime;
-            float k = 1f - Mathf.Clamp01(t / fadeOutTime);
-            emission.rateOverTime = startRate * k;
-            audioSrc.volume = startVolume * k;
+            float k = stopAtEnd ? Easing.InOutSine(t / duration) : Easing.OutCubic(t / duration);
+            emission.rateOverTime = Mathf.Lerp(rate0, rate1, k);
+            audioSrc.volume = Mathf.Lerp(vol0, vol1, k);
             yield return null;
         }
-        ps.Stop(true, ParticleSystemStopBehavior.StopEmitting);
-        audioSrc.Stop();
+        emission.rateOverTime = rate1;
+        audioSrc.volume = vol1;
+        if (stopAtEnd)
+        {
+            ps.Stop(true, ParticleSystemStopBehavior.StopEmitting);
+            audioSrc.Stop();
+        }
         fadeRoutine = null;
     }
 
@@ -129,24 +143,36 @@ public class GasLeakController : MonoBehaviour
 
         if (cam == null && Camera.main != null) cam = Camera.main.transform;
 
-        // Always face the camera (turn around the vertical axis only)
+        // Turn smoothly to face the camera (around the vertical axis only)
         if (cam != null)
         {
             Vector3 away = hazardMarker.transform.position - cam.position;
             away.y = 0f;
             if (away.sqrMagnitude > 0.0001f)
-                hazardMarker.transform.rotation = Quaternion.LookRotation(away.normalized, Vector3.up);
+                hazardMarker.transform.rotation = Quaternion.Slerp(hazardMarker.transform.rotation,
+                    Quaternion.LookRotation(away.normalized, Vector3.up), Easing.Damp(10f, Time.deltaTime));
         }
 
-        // Blink
-        blinkTimer += Time.deltaTime;
-        if (blinkTimer >= blinkInterval)
+        // Pop in, then a heartbeat pulse and a gentle float; shrink away when the leak stops
+        markerAge += Time.deltaTime;
+        float grow;
+        if (markerLeaving)
         {
-            blinkTimer = 0f;
-            markerVisible = !markerVisible;
-            foreach (var r in markerRenderers)
-                if (r != null) r.enabled = markerVisible;
+            grow = 1f - Easing.InQuad(markerAge / 0.35f);
+            if (grow <= 0f)
+            {
+                markerLeaving = false;
+                hazardMarker.transform.localScale = markerBaseScale;
+                hazardMarker.transform.localPosition = markerBasePos;
+                hazardMarker.SetActive(false);
+                return;
+            }
         }
+        else grow = Easing.OutBack(markerAge / 0.45f, 2.5f);
+
+        float beat = 1f + 0.1f * Mathf.Pow(0.5f + 0.5f * Mathf.Sin(markerAge * Mathf.PI / Mathf.Max(0.1f, blinkInterval)), 3f);
+        hazardMarker.transform.localScale = markerBaseScale * Mathf.Max(0f, grow) * beat;
+        hazardMarker.transform.localPosition = markerBasePos + Vector3.up * (0.012f * Mathf.Sin(markerAge * 2.2f));
     }
 
     /// <summary>
